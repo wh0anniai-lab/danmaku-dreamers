@@ -683,9 +683,9 @@ function Game() {
       if (g.shake > 0)
         ctx.translate((Math.random() - 0.5) * g.shake, (Math.random() - 0.5) * g.shake);
       const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, st.bg[0]);
-      bg.addColorStop(0.6, st.bg[1]);
-      bg.addColorStop(1, st.bg[2]);
+      bg.addColorStop(0, st.bg[0]!);
+      bg.addColorStop(0.6, st.bg[1]!);
+      bg.addColorStop(1, st.bg[2]!);
       ctx.fillStyle = bg;
       ctx.fillRect(-20, -20, W + 40, H + 40);
       if (st.fx === "stars") {
