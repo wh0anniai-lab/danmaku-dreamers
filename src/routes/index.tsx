@@ -963,7 +963,7 @@ function Game() {
       <div className="text-[10px] text-muted-foreground">{label}</div>
       {(cd > 0 || !ready) && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/70 text-xs font-bold">
-          {cd > 0 ? cd.toFixed(1) : `${Math.floor((1 - (max - 1)) * 0)}`}
+          {cd > 0 ? cd.toFixed(1) : `충전 ${Math.floor(hud.gauge * 100)}%`}
         </div>
       )}
     </button>
@@ -990,22 +990,23 @@ function Game() {
       <header className="text-center">
         <h1 className="text-2xl font-black tracking-tight text-foreground">탄막 소녀 — 총알 피하기</h1>
         <p className="text-xs text-muted-foreground">
-          방향키 이동 · Shift 정밀이동 · 사격은 자동 · 45초에 보스 등장
+          방향키 · 화면 드래그로 이동 · 사격은 자동 · 3개 스테이지, 각 45초에 보스 등장
         </p>
       </header>
 
       <div className="flex w-full max-w-[860px] flex-col items-center gap-4 md:flex-row md:items-start md:justify-center">
-        <div className="relative" style={{ width: W, maxWidth: "100%" }}>
+        <div className="flex flex-col gap-3" style={{ width: W, maxWidth: "100%" }}>
+        <div className="relative">
           <canvas
             ref={canvasRef}
             width={W}
             height={H}
-            className="w-full rounded-xl border border-border shadow-lg"
+            className="w-full touch-none select-none rounded-xl border border-border shadow-lg"
           />
           {hud.bossMax > 0 && (
-            <div className="absolute left-3 right-3 top-3">
+            <div className="pointer-events-none absolute left-3 right-3 top-3">
               <div className="mb-1 text-[10px] font-bold tracking-widest text-foreground">
-                STAGE BOSS
+                {STAGES[hud.stage].boss.name}
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-background/60">
                 <div
@@ -1020,27 +1021,38 @@ function Game() {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-background/80 px-6 text-center backdrop-blur-sm">
               <h2 className="text-xl font-black text-foreground">
                 {phase === "title"
-                  ? "스테이지 1 — 환상향의 탄막"
-                  : phase === "clear"
-                    ? "STAGE CLEAR!"
-                    : "GAME OVER"}
+                  ? "탄막 소녀 — 3개의 이변"
+                  : phase === "stageclear"
+                    ? `STAGE ${hud.stage + 1} CLEAR!`
+                    : phase === "clear"
+                      ? "ALL CLEAR! 이변 해결"
+                      : "GAME OVER"}
               </h2>
               <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
-                목숨 3개. 5초마다 탄막이 거세지고 45초에 보스가 나타납니다.
+                {phase === "stageclear"
+                  ? `다음: ${STAGES[hud.stage + 1]?.name ?? ""}`
+                  : "목숨 3개로 3개 스테이지를 돌파하세요. 5초마다 탄막이 거세지고 45초에 보스가 나타납니다."}
                 <br />
-                Q 강화 발출기 · W 방어막 · E 1초 자동 회피 · R 게이지 만충 시 전탄 소거
+                키보드: 방향키 + Q/W/E/R · 태블릿: 화면 드래그 + 하단 버튼
               </p>
               {phase !== "title" && (
                 <p className="text-sm font-bold text-foreground">SCORE {hud.score}</p>
               )}
               <button
-                onClick={() => startRef.current?.()}
+                onClick={() => (phase === "stageclear" ? nextRef.current?.() : startRef.current?.())}
                 className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
               >
-                {phase === "title" ? "게임 시작" : "다시 도전"}
+                {phase === "title" ? "게임 시작" : phase === "stageclear" ? "다음 스테이지" : "다시 도전"}
               </button>
             </div>
           )}
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {touchBtn("q", "강화 발출", hud.q, 6)}
+          {touchBtn("w", "방어막", hud.w, 9)}
+          {touchBtn("e", "자동 회피", hud.e, 11)}
+          {touchBtn("r", "스펠카드", 0, 1, hud.gauge >= 1)}
+        </div>
         </div>
 
         <aside className="w-full max-w-[280px] space-y-3">
@@ -1053,6 +1065,10 @@ function Game() {
                   {"♡".repeat(Math.max(0, 3 - hud.lives))}
                 </span>
               </span>
+            </div>
+            <div className="mt-1 flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">스테이지</span>
+              <span className="font-bold text-foreground">{hud.stage + 1} / 3</span>
             </div>
             <div className="mt-1 flex items-center justify-between text-sm">
               <span className="text-muted-foreground">난이도</span>
