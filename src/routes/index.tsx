@@ -72,6 +72,7 @@ const STAGES = [
     },
   },
 ];
+const stg = (i: number) => STAGES[Math.max(0, Math.min(STAGES.length - 1, i))]!;
 const PLAYER_PAL: Pal = { dress: "#e8467c", hair: "#7d59ea", ribbon: "#ff4d6d" };
 
 type Bullet = {
@@ -238,8 +239,8 @@ function Game() {
         y: -60,
         vx: 1.1,
         vy: 0.6,
-        hp: STAGES[g.stage].boss.hp,
-        maxHp: STAGES[g.stage].boss.hp,
+        hp: stg(g.stage).boss.hp,
+        maxHp: stg(g.stage).boss.hp,
         r: 30,
         t: 0,
         fire: 0,
@@ -600,7 +601,7 @@ function Game() {
     };
 
     const drawBoss = (e: Enemy) => {
-      const st = STAGES[g.stage];
+      const st = stg(g.stage);
       ctx.save();
       ctx.translate(e.x, e.y);
       const puls = 1 + Math.sin(g.t * 4) * 0.04;
@@ -677,7 +678,7 @@ function Game() {
     };
 
     const draw = () => {
-      const st = STAGES[g.stage];
+      const st = stg(g.stage);
       ctx.save();
       if (g.shake > 0)
         ctx.translate((Math.random() - 0.5) * g.shake, (Math.random() - 0.5) * g.shake);
@@ -737,7 +738,7 @@ function Game() {
       for (const e of g.enemies) {
         if (e.boss) drawBoss(e);
         else {
-          const st = STAGES[g.stage];
+          const st = stg(g.stage);
           ctx.save();
           ctx.translate(e.x, e.y);
           if (st.shape === "star") {
@@ -1006,7 +1007,7 @@ function Game() {
           {hud.bossMax > 0 && (
             <div className="pointer-events-none absolute left-3 right-3 top-3">
               <div className="mb-1 text-[10px] font-bold tracking-widest text-foreground">
-                {STAGES[hud.stage].boss.name}
+                {stg(hud.stage).boss.name}
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-background/60">
                 <div
