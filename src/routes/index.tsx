@@ -75,6 +75,49 @@ const STAGES = [
 const stg = (i: number) => STAGES[Math.max(0, Math.min(STAGES.length - 1, i))]!;
 const PLAYER_PAL: Pal = { dress: "#e8467c", hair: "#7d59ea", ribbon: "#ff4d6d" };
 
+type Char = {
+  name: string;
+  title: string;
+  pal: Pal;
+  speed: number;
+  shot: string;
+  skills: { q: [string, number]; w: [string, number]; e: [string, number] };
+  ult: { name: string; radius: number; dmg: number; label: string };
+  desc: string[];
+};
+const CHARS: Char[] = [
+  {
+    name: "하루",
+    title: "무녀 · 밸런스형",
+    pal: PLAYER_PAL,
+    speed: 1,
+    shot: "#9be8ff",
+    skills: { q: ["강화 발출", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
+    ult: { name: "몽환봉인", radius: 9999, dmg: 160, label: "맵 전체 소거 · 피해 약" },
+    desc: ["Q 4초간 4갈래 강화 사격", "W 1회 피격 무효 방어막", "E 1초간 자동으로 탄 회피"],
+  },
+  {
+    name: "유키",
+    title: "얼음 마법사 · 제어형",
+    pal: { dress: "#3aa0e8", hair: "#e8f6ff", ribbon: "#1c4d7a" },
+    speed: 0.95,
+    shot: "#c8f0ff",
+    skills: { q: ["유도 빙탄", 7], w: ["시간 감속", 12], e: ["순간이동", 8] },
+    ult: { name: "절대영도", radius: W / 2, dmg: 420, label: "맵 절반 반경 소거 · 피해 중" },
+    desc: ["Q 4초간 적을 쫓는 유도탄", "W 3초간 모든 탄 속도 1/3", "E 이동 방향으로 순간이동 + 무적"],
+  },
+  {
+    name: "카렌",
+    title: "홍염 검사 · 근접형",
+    pal: { dress: "#c2261d", hair: "#2a1a1a", ribbon: "#ffb347" },
+    speed: 1.1,
+    shot: "#ffcf70",
+    skills: { q: ["화염 레이저", 8], w: ["반사 결계", 10], e: ["돌진", 6] },
+    ult: { name: "홍련참", radius: W / 3, dmg: 900, label: "맵 1/3 반경 소거 · 피해 강" },
+    desc: ["Q 3초간 탄을 태우는 관통 레이저", "W 2.5초간 주변 탄을 적에게 반사", "E 짧은 돌진 + 경로의 탄 소거"],
+  },
+];
+
 type Bullet = {
   x: number;
   y: number;
@@ -84,7 +127,7 @@ type Bullet = {
   hue: number;
   kind: "ball" | "rice";
 };
-type Shot = { x: number; y: number; vx: number; vy: number; power: number };
+type Shot = { x: number; y: number; vx: number; vy: number; power: number; homing?: boolean };
 type Enemy = {
   x: number;
   y: number;
@@ -99,13 +142,18 @@ type Enemy = {
 };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; hue: number };
 
-type Phase = "title" | "play" | "stageclear" | "clear" | "over";
+type Phase = "title" | "select" | "play" | "stageclear" | "clear" | "over" | "continue";
 
 type Skill = { cd: number; max: number };
 
 function Game() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<Phase>("title");
+  const [charIdx, setCharIdx] = useState(0);
+  const [coin, setCoin] = useState("");
+  const [coinErr, setCoinErr] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const bgmRef = useRef<Bgm | null>(null);
   const [hud, setHud] = useState({
     lives: 3,
     time: 0,
@@ -121,9 +169,11 @@ function Game() {
     dodge: 0,
     stage: 0,
   });
-  const startRef = useRef<(() => void) | null>(null);
+  const startRef = useRef<((c: number) => void) | null>(null);
   const nextRef = useRef<(() => void) | null>(null);
+  const reviveRef = useRef<(() => void) | null>(null);
   const tapRef = useRef<((k: string) => void) | null>(null);
+
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -160,9 +210,15 @@ function Game() {
       },
       shake: 0,
       pose: 0,
+      char: 0,
+      slow: 0,
+      reflect: 0,
+      ultR: 9999,
     };
+    const bgm = () => (bgmRef.current ??= new Bgm());
 
     const onDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.tagName === "INPUT") return;
       const k = e.key.toLowerCase();
       if (
         ["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "q", "w", "e", "r", "shift"].includes(k)
@@ -268,22 +324,35 @@ function Game() {
       burst(g.px, g.py, 60, 330);
       g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) > 90);
       if (g.lives <= 0) {
+        g.lives = 0;
         g.running = false;
-        setPhase("over");
+        keys.clear();
+        bgm().stop();
+        setPhase("continue");
       }
     };
 
     const useUlt = () => {
       if (g.gauge < 1 || g.ult > 0) return;
+      const u = CHARS[g.char]!.ult;
       g.gauge = 0;
       g.ult = 1.6;
+      g.ultR = u.radius;
       g.inv = Math.max(g.inv, 1.8);
       g.shake = 18;
-      for (const b of g.bullets) burst(b.x, b.y, 2, b.hue);
-      g.bullets.length = 0;
+      g.bullets = g.bullets.filter((b) => {
+        if (Math.hypot(b.x - g.px, b.y - g.py) < u.radius) {
+          burst(b.x, b.y, 2, b.hue);
+          return false;
+        }
+        return true;
+      });
       g.score += 300;
       for (const e of g.enemies) {
-        e.hp -= e.boss ? 160 : 999;
+        if (Math.hypot(e.x - g.px, e.y - g.py) < u.radius + e.r) {
+          e.hp -= e.boss ? u.dmg : 999;
+          burst(e.x, e.y, 30, 50);
+        }
       }
     };
 
@@ -303,9 +372,10 @@ function Game() {
       const lv = level();
       const dv = diff();
 
+      const ch = CHARS[g.char]!;
       // movement
       const focus = keys.has("shift");
-      const sp = (focus ? 2.0 : 4.2) * (dt * 60);
+      const sp = (focus ? 2.0 : 4.2) * ch.speed * (dt * 60);
       if (keys.has("arrowleft")) g.px -= sp;
       if (keys.has("arrowright")) g.px += sp;
       if (keys.has("arrowup")) g.py -= sp;
@@ -317,27 +387,58 @@ function Game() {
       g.inv = Math.max(0, g.inv - dt);
       g.shield = Math.max(0, g.shield - dt);
       g.dodge = Math.max(0, g.dodge - dt);
+      g.slow = Math.max(0, g.slow - dt);
+      g.reflect = Math.max(0, g.reflect - dt);
       g.ult = Math.max(0, g.ult - dt);
       g.power = Math.max(0, g.power - dt);
       g.shake = Math.max(0, g.shake - dt * 30);
       g.gauge = Math.min(1, g.gauge + dt / 5);
       for (const k of ["q", "w", "e"] as const) g.skills[k].cd = Math.max(0, g.skills[k].cd - dt);
 
-      // skills
+      // skills (per character)
       if (pressed("q") && g.skills.q.cd === 0) {
         g.skills.q.cd = g.skills.q.max;
-        g.power = 4;
-        burst(g.px, g.py, 20, 40);
+        g.power = g.char === 2 ? 3 : 4;
+        burst(g.px, g.py, 20, g.char === 1 ? 195 : 40);
       }
       if (pressed("w") && g.skills.w.cd === 0) {
         g.skills.w.cd = g.skills.w.max;
-        g.shield = 4;
-        burst(g.px, g.py, 20, 200);
+        if (g.char === 0) g.shield = 4;
+        else if (g.char === 1) g.slow = 3;
+        else g.reflect = 2.5;
+        burst(g.px, g.py, 20, g.char === 2 ? 30 : 200);
       }
       if (pressed("e") && g.skills.e.cd === 0) {
         g.skills.e.cd = g.skills.e.max;
-        g.dodge = 1;
-        burst(g.px, g.py, 20, 300);
+        if (g.char === 0) {
+          g.dodge = 1;
+          burst(g.px, g.py, 20, 300);
+        } else {
+          let dx = (keys.has("arrowright") ? 1 : 0) - (keys.has("arrowleft") ? 1 : 0);
+          let dy = (keys.has("arrowdown") ? 1 : 0) - (keys.has("arrowup") ? 1 : 0);
+          if (!dx && !dy) dy = -1;
+          const dl = Math.hypot(dx, dy);
+          dx /= dl;
+          dy /= dl;
+          const dist = g.char === 1 ? 140 : 120;
+          const ox = g.px;
+          const oy = g.py;
+          burst(ox, oy, 24, g.char === 1 ? 195 : 20);
+          g.px = Math.max(14, Math.min(W - 14, g.px + dx * dist));
+          g.py = Math.max(20, Math.min(H - 20, g.py + dy * dist));
+          g.inv = Math.max(g.inv, g.char === 1 ? 0.8 : 0.5);
+          if (g.char === 2) {
+            // dash clears bullets along the path
+            g.bullets = g.bullets.filter((b) => {
+              const vx = g.px - ox;
+              const vy = g.py - oy;
+              const L = vx * vx + vy * vy || 1;
+              const t = Math.max(0, Math.min(1, ((b.x - ox) * vx + (b.y - oy) * vy) / L));
+              return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26;
+            });
+          }
+          burst(g.px, g.py, 24, g.char === 1 ? 195 : 20);
+        }
       }
       if (pressed("r")) useUlt();
       taps.clear();
@@ -360,11 +461,24 @@ function Game() {
       // player shots (auto fire)
       g.shotCd -= dt;
       if (g.shotCd <= 0) {
-        g.shotCd = g.power > 0 ? 0.055 : 0.1;
-        const pw = g.power > 0 ? 4 : 2;
-        const spread = g.power > 0 ? [-0.22, -0.08, 0.08, 0.22] : [-0.05, 0.05];
-        for (const a of spread)
-          g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: pw });
+        if (g.char === 0) {
+          g.shotCd = g.power > 0 ? 0.055 : 0.1;
+          const pw = g.power > 0 ? 4 : 2;
+          const spread = g.power > 0 ? [-0.22, -0.08, 0.08, 0.22] : [-0.05, 0.05];
+          for (const a of spread)
+            g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: pw });
+        } else if (g.char === 1) {
+          g.shotCd = 0.09;
+          if (g.power > 0)
+            for (const a of [-0.9, -0.3, 0.3, 0.9])
+              g.shots.push({ x: g.px, y: g.py - 12, vx: Math.sin(a) * 8, vy: -8, power: 3, homing: true });
+          else
+            for (const a of [-0.04, 0.04])
+              g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: 2 });
+        } else {
+          g.shotCd = 0.08;
+          g.shots.push({ x: g.px, y: g.py - 18, vx: 0, vy: -15, power: 3 });
+        }
       }
 
       // spawning
@@ -378,6 +492,7 @@ function Game() {
         if (g.t >= BOSS_TIME) {
           g.bossSpawned = true;
           spawnBoss();
+          bgm().play("boss", g.stage * 2);
         }
       }
 
@@ -465,26 +580,61 @@ function Game() {
 
       // player shots
       for (const s of g.shots) {
+        if (s.homing && g.enemies.length) {
+          let tgt = g.enemies[0]!;
+          let bd = Infinity;
+          for (const e of g.enemies) {
+            const d = Math.hypot(e.x - s.x, e.y - s.y);
+            if (d < bd) {
+              bd = d;
+              tgt = e;
+            }
+          }
+          const a = Math.atan2(tgt.y - s.y, tgt.x - s.x);
+          s.vx += (Math.cos(a) * 11 - s.vx) * 0.15;
+          s.vy += (Math.sin(a) * 11 - s.vy) * 0.15;
+        }
         s.x += s.vx * dt * 60;
         s.y += s.vy * dt * 60;
         for (const e of g.enemies) {
           if (Math.hypot(s.x - e.x, s.y - e.y) < e.r + 4) {
             e.hp -= s.power;
-            s.y = -999;
             burst(s.x, s.y, 2, 50);
+            s.y = -999;
             break;
           }
         }
       }
-      g.shots = g.shots.filter((s) => s.y > -20 && s.x > -20 && s.x < W + 20);
+      g.shots = g.shots.filter((s) => s.y > -20 && s.y < H + 20 && s.x > -20 && s.x < W + 20);
+
+      // laser (Karen Q)
+      if (g.char === 2 && g.power > 0) {
+        for (const e of g.enemies)
+          if (Math.abs(e.x - g.px) < e.r + 12 && e.y < g.py) e.hp -= 95 * dt;
+        g.bullets = g.bullets.filter((b) => !(Math.abs(b.x - g.px) < 12 && b.y < g.py - 10));
+      }
+      // reflect barrier (Karen W)
+      if (g.reflect > 0) {
+        g.bullets = g.bullets.filter((b) => {
+          if (Math.hypot(b.x - g.px, b.y - g.py) < 60) {
+            const tgt = g.enemies[0];
+            const a = tgt ? Math.atan2(tgt.y - b.y, tgt.x - b.x) : -Math.PI / 2;
+            g.shots.push({ x: b.x, y: b.y, vx: Math.cos(a) * 10, vy: Math.sin(a) * 10, power: 4 });
+            return false;
+          }
+          return true;
+        });
+      }
 
       // bullets
+      const bs = g.slow > 0 ? 0.33 : 1;
       for (const b of g.bullets) {
-        b.x += b.vx * dt * 60;
-        b.y += b.vy * dt * 60;
+        b.x += b.vx * dt * 60 * bs;
+        b.y += b.vy * dt * 60 * bs;
         if (Math.hypot(b.x - g.px, b.y - g.py) < b.r + 4) {
           b.y = H + 999;
           hitPlayer();
+          if (!g.running) break;
         }
       }
       g.bullets = g.bullets.filter((b) => b.x > -30 && b.x < W + 30 && b.y > -40 && b.y < H + 30);
@@ -728,10 +878,14 @@ function Game() {
 
       // player shots
       for (const s of g.shots) {
-        ctx.fillStyle = s.power > 2 ? "#ffe066" : "#9be8ff";
+        ctx.fillStyle = s.power > 3 ? "#ffe066" : CHARS[g.char]!.shot;
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(Math.atan2(s.vy, s.vx) + Math.PI / 2);
         ctx.beginPath();
-        ctx.ellipse(s.x, s.y, 2.6, 7, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, 2.6, 7, 0, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
 
       // enemies
@@ -826,9 +980,60 @@ function Game() {
         }
       }
 
+      const pc = CHARS[g.char]!;
+      // slow-time tint
+      if (g.slow > 0) {
+        ctx.fillStyle = `rgba(150,220,255,${Math.min(0.18, g.slow * 0.1)})`;
+        ctx.fillRect(-20, -20, W + 40, H + 40);
+      }
+      // laser
+      if (g.char === 2 && g.power > 0) {
+        const wv = 10 + Math.sin(g.t * 40) * 3;
+        const lg = ctx.createLinearGradient(g.px - wv, 0, g.px + wv, 0);
+        lg.addColorStop(0, "rgba(255,120,40,0)");
+        lg.addColorStop(0.5, "rgba(255,245,200,0.95)");
+        lg.addColorStop(1, "rgba(255,120,40,0)");
+        ctx.fillStyle = lg;
+        ctx.fillRect(g.px - wv * 1.6, 0, wv * 3.2, g.py - 18);
+      }
+      // ult range ring
+      if (g.ult > 0 && g.ultR < 2000) {
+        const k = 1 - g.ult / 1.6;
+        const rr = g.ultR * Math.min(1, k * 3);
+        ctx.fillStyle = `hsl(${g.char === 1 ? 195 : 15} 100% 70% / ${g.ult * 0.18})`;
+        ctx.beginPath();
+        ctx.arc(g.px, g.py, rr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `hsl(${g.char === 1 ? 195 : 15} 100% 80% / ${g.ult * 0.6})`;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
       // player
-      if (!(g.inv > 0 && Math.floor(g.t * 14) % 2 === 0)) {
-        drawGirl(g.px, g.py, g.ult > 0 ? 1 + (1.6 - g.ult) * 0.5 : 1, g.ult);
+      if (!(g.inv > 0 && g.ult === 0 && Math.floor(g.t * 14) % 2 === 0)) {
+        drawGirl(g.px, g.py, g.ult > 0 ? 1 + (1.6 - g.ult) * 0.5 : 1, g.ult, pc.pal);
+        if (g.char === 1) {
+          ctx.fillStyle = "#1c4d7a";
+          ctx.beginPath();
+          ctx.moveTo(g.px - 12, g.py - 24);
+          ctx.lineTo(g.px + 12, g.py - 24);
+          ctx.lineTo(g.px + 3, g.py - 42);
+          ctx.closePath();
+          ctx.fill();
+        } else if (g.char === 2) {
+          ctx.strokeStyle = "#ffe0b0";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(g.px + 12, g.py + 6);
+          ctx.lineTo(g.px + 20, g.py - 22);
+          ctx.stroke();
+        }
+      }
+      if (g.reflect > 0) {
+        ctx.strokeStyle = `hsl(30 100% 65% / ${0.5 + Math.sin(g.t * 16) * 0.25})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(g.px, g.py, 60, 0, Math.PI * 2);
+        ctx.stroke();
       }
       if (g.shield > 0) {
         ctx.strokeStyle = `hsl(200 100% 75% / ${0.4 + Math.sin(g.t * 10) * 0.2})`;
@@ -866,13 +1071,14 @@ function Game() {
         ctx.fillStyle = "#ffd6ea";
         ctx.font = "bold 20px sans-serif";
         ctx.fillText("조작 가이드", W / 2, 188);
+        const cc = CHARS[g.char]!;
         const lines: [string, string][] = [
           ["방향키 / 화면 드래그", "이동"],
           ["Shift", "정밀 이동 (사격은 자동)"],
-          ["Q", "강화 발출기 4초"],
-          ["W", "방어막 (1회 피격 무효)"],
-          ["E", "1초 자동 회피"],
-          ["R", "게이지 100% — 전탄 소거"],
+          ["Q", cc.desc[0]!.slice(2)],
+          ["W", cc.desc[1]!.slice(2)],
+          ["E", cc.desc[2]!.slice(2)],
+          ["R", `게이지 100% — ${cc.ult.label}`],
         ];
         ctx.font = "14px sans-serif";
         lines.forEach(([k, v], i) => {
@@ -905,12 +1111,15 @@ function Game() {
     };
 
     const resetStage = () => {
+      const c = CHARS[g.char]!;
       g.t = 0;
       g.px = W / 2;
       g.py = H - 90;
       g.inv = 1;
       g.shield = 0;
       g.dodge = 0;
+      g.slow = 0;
+      g.reflect = 0;
       g.ult = 0;
       g.power = 0;
       g.bullets.length = 0;
@@ -919,15 +1128,17 @@ function Game() {
       g.parts.length = 0;
       g.spawn = 0.6;
       g.bossSpawned = false;
-      g.skills.q.cd = 0;
-      g.skills.w.cd = 0;
-      g.skills.e.cd = 0;
+      g.skills.q = { cd: 0, max: c.skills.q[1] };
+      g.skills.w = { cd: 0, max: c.skills.w[1] };
+      g.skills.e = { cd: 0, max: c.skills.e[1] };
       taps.clear();
       g.running = true;
+      bgm().play(`stage${g.stage}`);
       setPhase("play");
     };
 
-    startRef.current = () => {
+    startRef.current = (c: number) => {
+      g.char = c;
       g.stage = 0;
       g.lives = 3;
       g.score = 0;
@@ -937,6 +1148,18 @@ function Game() {
     nextRef.current = () => {
       g.stage = Math.min(STAGES.length - 1, g.stage + 1);
       resetStage();
+    };
+    reviveRef.current = () => {
+      g.lives = 3;
+      g.inv = 3;
+      g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) > 160);
+      burst(g.px, g.py, 80, 50);
+      keys.clear();
+      taps.clear();
+      g.running = true;
+      if (g.bossSpawned) bgm().play("boss", g.stage * 2);
+      else bgm().play(`stage${g.stage}`);
+      setPhase("play");
     };
 
     raf = requestAnimationFrame(loop);
@@ -951,7 +1174,9 @@ function Game() {
     };
   }, []);
 
-  const touchBtn = (k: string, label: string, cd: number, max: number, ready = true) => (
+  const ch = CHARS[charIdx]!;
+
+  const touchBtn = (k: string, label: string, cd: number, ready = true) => (
     <button
       key={k}
       onPointerDown={(ev) => {
@@ -986,6 +1211,16 @@ function Game() {
     </div>
   );
 
+  const submitCoin = () => {
+    if (coin.trim().toLowerCase() === "lovable") {
+      setCoin("");
+      setCoinErr(false);
+      reviveRef.current?.();
+    } else {
+      setCoinErr(true);
+    }
+  };
+
   return (
     <main className="flex min-h-screen flex-col items-center gap-4 bg-background px-4 py-6">
       <header className="text-center">
@@ -993,6 +1228,16 @@ function Game() {
         <p className="text-xs text-muted-foreground">
           방향키 · 화면 드래그로 이동 · 사격은 자동 · 3개 스테이지, 각 45초에 보스 등장
         </p>
+        <button
+          onClick={() => {
+            const m = !muted;
+            setMuted(m);
+            bgmRef.current?.setMuted(m);
+          }}
+          className="mt-1 rounded-full border border-border px-3 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {muted ? "♪ 음악 켜기" : "♪ 음악 끄기"}
+        </button>
       </header>
 
       <div className="flex w-full max-w-[860px] flex-col items-center gap-4 md:flex-row md:items-start md:justify-center">
@@ -1018,7 +1263,82 @@ function Game() {
             </div>
           )}
 
-          {phase !== "play" && (
+          {phase === "select" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-xl bg-background/85 px-4 py-4 text-center backdrop-blur-sm">
+              <h2 className="text-xl font-black text-foreground">캐릭터 선택</h2>
+              <div className="flex w-full flex-col gap-2">
+                {CHARS.map((c, i) => (
+                  <button
+                    key={c.name}
+                    onClick={() => setCharIdx(i)}
+                    className={`rounded-xl border p-3 text-left transition-colors ${
+                      i === charIdx ? "border-primary bg-primary/15" : "border-border bg-card/70"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.hair }} />
+                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.dress }} />
+                      <span className="font-black text-foreground">{c.name}</span>
+                      <span className="text-[11px] text-muted-foreground">{c.title}</span>
+                    </div>
+                    <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                      {c.desc.map((d) => (
+                        <li key={d}>{d}</li>
+                      ))}
+                      <li className="font-bold text-foreground">
+                        R {c.ult.name} — {c.ult.label}
+                      </li>
+                    </ul>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => startRef.current?.(charIdx)}
+                className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
+              >
+                {ch.name}(으)로 출격
+              </button>
+            </div>
+          )}
+
+          {phase === "continue" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-background/85 px-6 text-center backdrop-blur-sm">
+              <h2 className="text-2xl font-black text-foreground">INSERT COIN</h2>
+              <p className="text-sm text-foreground">coin을 더 넣으시겠습니까?</p>
+              <p className="text-xs text-muted-foreground">코인 코드를 입력하면 지금 이 자리에서 목숨 3개로 부활합니다.</p>
+              <form
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  submitCoin();
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  autoFocus
+                  value={coin}
+                  onChange={(ev) => {
+                    setCoin(ev.target.value);
+                    setCoinErr(false);
+                  }}
+                  placeholder="코인 코드"
+                  className="w-40 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+                />
+                <button className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
+                  투입
+                </button>
+              </form>
+              {coinErr && <p className="text-xs font-bold text-destructive">코인이 맞지 않습니다.</p>}
+              <p className="text-sm font-bold text-foreground">SCORE {hud.score}</p>
+              <button
+                onClick={() => setPhase("select")}
+                className="text-xs text-muted-foreground underline"
+              >
+                포기하고 처음부터
+              </button>
+            </div>
+          )}
+
+          {phase !== "play" && phase !== "select" && phase !== "continue" && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-background/80 px-6 text-center backdrop-blur-sm">
               <h2 className="text-xl font-black text-foreground">
                 {phase === "title"
@@ -1040,7 +1360,7 @@ function Game() {
                 <p className="text-sm font-bold text-foreground">SCORE {hud.score}</p>
               )}
               <button
-                onClick={() => (phase === "stageclear" ? nextRef.current?.() : startRef.current?.())}
+                onClick={() => (phase === "stageclear" ? nextRef.current?.() : setPhase("select"))}
                 className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
               >
                 {phase === "title" ? "게임 시작" : phase === "stageclear" ? "다음 스테이지" : "다시 도전"}
@@ -1049,16 +1369,20 @@ function Game() {
           )}
         </div>
         <div className="grid grid-cols-4 gap-2">
-          {touchBtn("q", "강화 발출", hud.q, 6)}
-          {touchBtn("w", "방어막", hud.w, 9)}
-          {touchBtn("e", "자동 회피", hud.e, 11)}
-          {touchBtn("r", "스펠카드", 0, 1, hud.gauge >= 1)}
+          {touchBtn("q", ch.skills.q[0], hud.q)}
+          {touchBtn("w", ch.skills.w[0], hud.w)}
+          {touchBtn("e", ch.skills.e[0], hud.e)}
+          {touchBtn("r", "궁극기", 0, hud.gauge >= 1)}
         </div>
         </div>
 
         <aside className="w-full max-w-[280px] space-y-3">
           <div className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">캐릭터</span>
+              <span className="font-bold text-foreground">{ch.name}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between text-sm">
               <span className="text-muted-foreground">목숨</span>
               <span className="text-foreground">
                 {"♥".repeat(Math.max(0, hud.lives))}
@@ -1086,16 +1410,17 @@ function Game() {
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            {skillBox("q", "강화 발출", hud.q, 6)}
-            {skillBox("w", "방어막", hud.w, 9)}
-            {skillBox("e", "자동 회피", hud.e, 11)}
+            {skillBox("q", ch.skills.q[0], hud.q, ch.skills.q[1])}
+            {skillBox("w", ch.skills.w[0], hud.w, ch.skills.w[1])}
+            {skillBox("e", ch.skills.e[0], hud.e, ch.skills.e[1])}
           </div>
 
           <div className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-foreground">R · 스펠카드 (전탄 소거)</span>
+              <span className="font-bold text-foreground">R · {ch.ult.name}</span>
               <span className="text-muted-foreground">{Math.floor(hud.gauge * 100)}%</span>
             </div>
+            <div className="mt-1 text-[10px] text-muted-foreground">{ch.ult.label}</div>
             <div className="mt-2 h-3 overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full bg-destructive transition-[width] duration-100"
@@ -1105,7 +1430,7 @@ function Game() {
           </div>
 
           <div className="rounded-xl border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
-            작은 흰 점이 판정 범위입니다. 총알은 자동으로 발사되니 회피에 집중하세요.
+            작은 흰 점이 판정 범위입니다. 궁극기는 범위가 좁을수록 보스에게 큰 피해를 줍니다 — 범위 안에 보스를 넣으세요.
           </div>
         </aside>
       </div>
