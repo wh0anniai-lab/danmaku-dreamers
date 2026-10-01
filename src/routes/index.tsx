@@ -226,6 +226,7 @@ function Game() {
       )
         e.preventDefault();
       keys.add(k);
+      if (g.running && ["q", "w", "e", "r"].includes(k)) taps.add(k);
     };
     const onUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
     window.addEventListener("keydown", onDown);
