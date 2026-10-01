@@ -572,6 +572,7 @@ function Game() {
           if (e.boss) {
             g.running = false;
             g.bullets.length = 0;
+            bgm().stop();
             setPhase(g.stage < STAGES.length - 1 ? "stageclear" : "clear");
           }
           return false;
