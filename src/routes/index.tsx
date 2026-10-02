@@ -27,6 +27,10 @@ const W = 480;
 const H = 680;
 const BOSS_TIME = 45;
 const TUTORIAL = 5;
+const BOSS_ULT = 7;
+const BOSS_ULT_NAMES = ["월광 「크레센트 레퀴엠」", "빙결 「다이아몬드 블리자드」", "홍월 「스칼렛 디스티니」"];
+type Ups = { q: number; w: number; e: number };
+const UP_DESC = { q: "쿨 -15% · 지속 +35%", w: "쿨 -15% · 지속 +35%", e: "쿨 -15% · 효과 +35%" };
 
 type Pal = { dress: string; hair: string; ribbon: string };
 const STAGES = [
@@ -170,8 +174,10 @@ function Game() {
     dodge: 0,
     stage: 0,
   });
+  const [ups, setUps] = useState<Ups>({ q: 0, w: 0, e: 0 });
+  const [upPick, setUpPick] = useState<keyof Ups | null>(null);
   const startRef = useRef<((c: number) => void) | null>(null);
-  const nextRef = useRef<(() => void) | null>(null);
+  const nextRef = useRef<((u: Ups) => void) | null>(null);
   const reviveRef = useRef<(() => void) | null>(null);
   const tapRef = useRef<((k: string) => void) | null>(null);
 
@@ -215,6 +221,9 @@ function Game() {
       slow: 0,
       reflect: 0,
       ultR: 9999,
+      up: { q: 0, w: 0, e: 0 } as Ups,
+      bossUlt: 0,
+      bossUltUsed: false,
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
 
@@ -392,28 +401,34 @@ function Game() {
       g.slow = Math.max(0, g.slow - dt);
       g.reflect = Math.max(0, g.reflect - dt);
       g.ult = Math.max(0, g.ult - dt);
+      g.bossUlt = Math.max(0, g.bossUlt - dt);
+      // ultimate keeps erasing every bullet inside its range while active
+      if (g.ult > 0) g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) >= g.ultR);
       g.power = Math.max(0, g.power - dt);
       g.shake = Math.max(0, g.shake - dt * 30);
       g.gauge = Math.min(1, g.gauge + dt / 5);
       for (const k of ["q", "w", "e"] as const) g.skills[k].cd = Math.max(0, g.skills[k].cd - dt);
+      const mq = 1 + 0.35 * g.up.q;
+      const mw = 1 + 0.35 * g.up.w;
+      const me = 1 + 0.35 * g.up.e;
 
       // skills (per character)
       if (pressed("q") && g.skills.q.cd === 0) {
         g.skills.q.cd = g.skills.q.max;
-        g.power = g.char === 2 ? 3 : 4;
+        g.power = (g.char === 2 ? 3 : 4) * mq;
         burst(g.px, g.py, 20, g.char === 1 ? 195 : 40);
       }
       if (pressed("w") && g.skills.w.cd === 0) {
         g.skills.w.cd = g.skills.w.max;
-        if (g.char === 0) g.shield = 4;
-        else if (g.char === 1) g.slow = 3;
-        else g.reflect = 2.5;
+        if (g.char === 0) g.shield = 4 * mw;
+        else if (g.char === 1) g.slow = 3 * mw;
+        else g.reflect = 2.5 * mw;
         burst(g.px, g.py, 20, g.char === 2 ? 30 : 200);
       }
       if (pressed("e") && g.skills.e.cd === 0) {
         g.skills.e.cd = g.skills.e.max;
         if (g.char === 0) {
-          g.dodge = 1;
+          g.dodge = 1 * me;
           burst(g.px, g.py, 20, 300);
         } else {
           let dx = (keys.has("arrowright") ? 1 : 0) - (keys.has("arrowleft") ? 1 : 0);
@@ -422,13 +437,13 @@ function Game() {
           const dl = Math.hypot(dx, dy);
           dx /= dl;
           dy /= dl;
-          const dist = g.char === 1 ? 140 : 120;
+          const dist = (g.char === 1 ? 140 : 120) * (1 + 0.15 * g.up.e);
           const ox = g.px;
           const oy = g.py;
           burst(ox, oy, 24, g.char === 1 ? 195 : 20);
           g.px = Math.max(14, Math.min(W - 14, g.px + dx * dist));
           g.py = Math.max(20, Math.min(H - 20, g.py + dy * dist));
-          g.inv = Math.max(g.inv, g.char === 1 ? 0.8 : 0.5);
+          g.inv = Math.max(g.inv, (g.char === 1 ? 0.8 : 0.5) * me);
           if (g.char === 2) {
             // dash clears bullets along the path
             g.bullets = g.bullets.filter((b) => {
@@ -436,7 +451,7 @@ function Game() {
               const vy = g.py - oy;
               const L = vx * vx + vy * vy || 1;
               const t = Math.max(0, Math.min(1, ((b.x - ox) * vx + (b.y - oy) * vy) / L));
-              return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26;
+              return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26 + 8 * g.up.e;
             });
           }
           burst(g.px, g.py, 24, g.char === 1 ? 195 : 20);
@@ -511,7 +526,40 @@ function Game() {
             e.fire -= dt;
             const hpRatio = e.hp / e.maxHp;
             const aim = Math.atan2(g.py - e.y, g.px - e.x);
-            if (e.fire <= 0 && g.stage === 0) {
+            if (hpRatio <= 0.1 && !g.bossUltUsed) {
+              g.bossUltUsed = true;
+              g.bossUlt = BOSS_ULT;
+              g.bullets.length = 0;
+              g.shake = 20;
+              burst(e.x, e.y, 120, 0);
+              e.fire = 1.2; // wind-up
+            }
+            if (g.bossUlt > 0) {
+              // boss is invulnerable-ish during wind-up, then fires its ultimate
+              e.x += (W / 2 - e.x) * Math.min(1, dt * 3);
+              if (e.fire <= 0) {
+                if (g.stage === 0) {
+                  e.fire = 0.07;
+                  for (let k = 0; k < 6; k++) {
+                    shootBullet(e.x, e.y, e.t * 2.6 + (k * Math.PI) / 3, 3.0, 300, "rice");
+                    shootBullet(e.x, e.y, -e.t * 2.6 + (k * Math.PI) / 3, 2.4, 50, "rice");
+                  }
+                } else if (g.stage === 1) {
+                  e.fire = 0.32;
+                  const n = 30;
+                  const off = Math.random() * 0.2;
+                  for (let i = 0; i < n; i++) shootBullet(e.x, e.y, off + (i * Math.PI * 2) / n, 2.0, 190);
+                  for (let i = 0; i < 4; i++)
+                    shootBullet(20 + Math.random() * (W - 40), -10, Math.PI / 2 + (Math.random() - 0.5) * 0.4, 2.6, 210, "rice");
+                } else {
+                  e.fire = 0.06;
+                  for (let k = 0; k < 5; k++)
+                    shootBullet(e.x, e.y, e.t * 3.4 + (k * Math.PI * 2) / 5, 3.4, 0, "rice");
+                  if (Math.random() < 0.12)
+                    for (let i = -3; i <= 3; i++) shootBullet(e.x, e.y, aim + i * 0.1, 4.6, 30);
+                }
+              }
+            } else if (e.fire <= 0 && g.stage === 0) {
               e.fire = hpRatio > 0.5 ? 0.14 : 0.1;
               const n = hpRatio > 0.5 ? 9 : 13;
               const base = e.t * (hpRatio > 0.5 ? 1.7 : -2.3);
@@ -1099,6 +1147,59 @@ function Game() {
         ctx.fillText(`적 출현까지 ${Math.ceil(TUTORIAL - g.t)}초`, W / 2, 440);
         ctx.globalAlpha = 1;
       }
+      // boss ultimate warning
+      if (g.bossUlt > 0) {
+        const a = Math.min(1, g.bossUlt);
+        ctx.fillStyle = `rgba(160,0,30,${0.12 + Math.sin(g.t * 12) * 0.06})`;
+        ctx.fillRect(-20, -20, W + 40, H + 40);
+        if (g.bossUlt > BOSS_ULT - 1.6) {
+          ctx.globalAlpha = a;
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#ff3355";
+          ctx.font = "bold 13px sans-serif";
+          ctx.fillText("⚠ BOSS ULTIMATE ⚠", W / 2, 200);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 22px serif";
+          ctx.fillText(`「${BOSS_ULT_NAMES[g.stage]}」`, W / 2, 230);
+          ctx.globalAlpha = 1;
+        }
+      }
+      // ult cut-in
+      if (g.ult > 0.5) {
+        const p = 1.6 - g.ult; // 0 -> 1.1
+        const slide = p < 0.2 ? 1 - p / 0.2 : p > 0.85 ? (p - 0.85) / 0.25 : 0;
+        const alpha = Math.max(0, 1 - Math.max(0, p - 0.85) / 0.25);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "rgba(10,5,25,0.75)";
+        ctx.beginPath();
+        ctx.moveTo(0, H / 2 - 120);
+        ctx.lineTo(W, H / 2 - 160);
+        ctx.lineTo(W, H / 2 + 80);
+        ctx.lineTo(0, H / 2 + 120);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = pc.pal.dress;
+        ctx.fillRect(0, H / 2 - 124, W, 3);
+        ctx.fillRect(0, H / 2 + 118, W, 3);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(0, H / 2 - 120);
+        ctx.lineTo(W, H / 2 - 160);
+        ctx.lineTo(W, H / 2 + 80);
+        ctx.lineTo(0, H / 2 + 120);
+        ctx.closePath();
+        ctx.clip();
+        drawGirl(150 - slide * 300, H / 2 + 40, 6.5, 0, pc.pal);
+        ctx.restore();
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 30px serif";
+        ctx.fillText(`「${pc.ult.name}」`, W - 24 + slide * 300, H / 2 - 10);
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillStyle = pc.pal.hair;
+        ctx.fillText(`${pc.name} — SPELL CARD`, W - 24 + slide * 300, H / 2 + 18);
+        ctx.globalAlpha = 1;
+      }
       // stage banner
       const bannerStart = g.stage === 0 ? TUTORIAL : 0;
       if (g.running && g.t >= bannerStart && g.t < bannerStart + 2.2) {
@@ -1125,15 +1226,17 @@ function Game() {
       g.reflect = 0;
       g.ult = 0;
       g.power = 0;
+      g.bossUlt = 0;
+      g.bossUltUsed = false;
       g.bullets.length = 0;
       g.shots.length = 0;
       g.enemies.length = 0;
       g.parts.length = 0;
       g.spawn = 0.6;
       g.bossSpawned = false;
-      g.skills.q = { cd: 0, max: c.skills.q[1] };
-      g.skills.w = { cd: 0, max: c.skills.w[1] };
-      g.skills.e = { cd: 0, max: c.skills.e[1] };
+      g.skills.q = { cd: 0, max: c.skills.q[1] * (1 - 0.15 * g.up.q) };
+      g.skills.w = { cd: 0, max: c.skills.w[1] * (1 - 0.15 * g.up.w) };
+      g.skills.e = { cd: 0, max: c.skills.e[1] * (1 - 0.15 * g.up.e) };
       taps.clear();
       g.running = true;
       bgm().play(`stage${g.stage}`);
@@ -1146,9 +1249,13 @@ function Game() {
       g.lives = 3;
       g.score = 0;
       g.gauge = 0;
+      g.up = { q: 0, w: 0, e: 0 };
+      setUps({ q: 0, w: 0, e: 0 });
+      setUpPick(null);
       resetStage();
     };
-    nextRef.current = () => {
+    nextRef.current = (u: Ups) => {
+      g.up = { ...u };
       g.stage = Math.min(STAGES.length - 1, g.stage + 1);
       resetStage();
     };
@@ -1362,11 +1469,46 @@ function Game() {
               {phase !== "title" && (
                 <p className="text-sm font-bold text-foreground">SCORE {hud.score}</p>
               )}
+              {phase === "stageclear" && (
+                <div className="w-full max-w-xs">
+                  <p className="mb-2 text-xs font-bold text-foreground">
+                    스킬 강화 1회 — 하나를 고르세요
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["q", "w", "e"] as const).map((k) => (
+                      <button
+                        key={k}
+                        disabled={ups[k] >= 2}
+                        onClick={() => setUpPick(k)}
+                        className={`rounded-lg border p-2 text-[11px] transition-colors disabled:opacity-40 ${
+                          upPick === k ? "border-primary bg-primary/20" : "border-border bg-card"
+                        }`}
+                      >
+                        <div className="font-black text-foreground">
+                          {k.toUpperCase()} Lv{ups[k] + 1}
+                          {upPick === k ? `→${ups[k] + 2}` : ""}
+                        </div>
+                        <div className="text-muted-foreground">{ch.skills[k][0]}</div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">{UP_DESC[k]}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
-                onClick={() => (phase === "stageclear" ? nextRef.current?.() : setPhase("select"))}
-                className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
+                disabled={phase === "stageclear" && !upPick}
+                onClick={() => {
+                  if (phase === "stageclear") {
+                    if (!upPick) return;
+                    const n = { ...ups, [upPick]: ups[upPick] + 1 };
+                    setUps(n);
+                    setUpPick(null);
+                    nextRef.current?.(n);
+                  } else setPhase("select");
+                }}
+                className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105 disabled:opacity-40"
               >
-                {phase === "title" ? "게임 시작" : phase === "stageclear" ? "다음 스테이지" : "다시 도전"}
+                {phase === "title" ? "게임 시작" : phase === "stageclear" ? "강화하고 다음 스테이지" : "다시 도전"}
               </button>
             </div>
           )}
