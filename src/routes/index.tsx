@@ -392,28 +392,34 @@ function Game() {
       g.slow = Math.max(0, g.slow - dt);
       g.reflect = Math.max(0, g.reflect - dt);
       g.ult = Math.max(0, g.ult - dt);
+      g.bossUlt = Math.max(0, g.bossUlt - dt);
+      // ultimate keeps erasing every bullet inside its range while active
+      if (g.ult > 0) g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) >= g.ultR);
       g.power = Math.max(0, g.power - dt);
       g.shake = Math.max(0, g.shake - dt * 30);
       g.gauge = Math.min(1, g.gauge + dt / 5);
       for (const k of ["q", "w", "e"] as const) g.skills[k].cd = Math.max(0, g.skills[k].cd - dt);
+      const mq = 1 + 0.35 * g.up.q;
+      const mw = 1 + 0.35 * g.up.w;
+      const me = 1 + 0.35 * g.up.e;
 
       // skills (per character)
       if (pressed("q") && g.skills.q.cd === 0) {
         g.skills.q.cd = g.skills.q.max;
-        g.power = g.char === 2 ? 3 : 4;
+        g.power = (g.char === 2 ? 3 : 4) * mq;
         burst(g.px, g.py, 20, g.char === 1 ? 195 : 40);
       }
       if (pressed("w") && g.skills.w.cd === 0) {
         g.skills.w.cd = g.skills.w.max;
-        if (g.char === 0) g.shield = 4;
-        else if (g.char === 1) g.slow = 3;
-        else g.reflect = 2.5;
+        if (g.char === 0) g.shield = 4 * mw;
+        else if (g.char === 1) g.slow = 3 * mw;
+        else g.reflect = 2.5 * mw;
         burst(g.px, g.py, 20, g.char === 2 ? 30 : 200);
       }
       if (pressed("e") && g.skills.e.cd === 0) {
         g.skills.e.cd = g.skills.e.max;
         if (g.char === 0) {
-          g.dodge = 1;
+          g.dodge = 1 * me;
           burst(g.px, g.py, 20, 300);
         } else {
           let dx = (keys.has("arrowright") ? 1 : 0) - (keys.has("arrowleft") ? 1 : 0);
@@ -422,13 +428,13 @@ function Game() {
           const dl = Math.hypot(dx, dy);
           dx /= dl;
           dy /= dl;
-          const dist = g.char === 1 ? 140 : 120;
+          const dist = (g.char === 1 ? 140 : 120) * (1 + 0.15 * g.up.e);
           const ox = g.px;
           const oy = g.py;
           burst(ox, oy, 24, g.char === 1 ? 195 : 20);
           g.px = Math.max(14, Math.min(W - 14, g.px + dx * dist));
           g.py = Math.max(20, Math.min(H - 20, g.py + dy * dist));
-          g.inv = Math.max(g.inv, g.char === 1 ? 0.8 : 0.5);
+          g.inv = Math.max(g.inv, (g.char === 1 ? 0.8 : 0.5) * me);
           if (g.char === 2) {
             // dash clears bullets along the path
             g.bullets = g.bullets.filter((b) => {
@@ -436,7 +442,7 @@ function Game() {
               const vy = g.py - oy;
               const L = vx * vx + vy * vy || 1;
               const t = Math.max(0, Math.min(1, ((b.x - ox) * vx + (b.y - oy) * vy) / L));
-              return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26;
+              return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26 + 8 * g.up.e;
             });
           }
           burst(g.px, g.py, 24, g.char === 1 ? 195 : 20);
@@ -511,7 +517,40 @@ function Game() {
             e.fire -= dt;
             const hpRatio = e.hp / e.maxHp;
             const aim = Math.atan2(g.py - e.y, g.px - e.x);
-            if (e.fire <= 0 && g.stage === 0) {
+            if (hpRatio <= 0.1 && !g.bossUltUsed) {
+              g.bossUltUsed = true;
+              g.bossUlt = BOSS_ULT;
+              g.bullets.length = 0;
+              g.shake = 20;
+              burst(e.x, e.y, 120, 0);
+              e.fire = 1.2; // wind-up
+            }
+            if (g.bossUlt > 0) {
+              // boss is invulnerable-ish during wind-up, then fires its ultimate
+              e.x += (W / 2 - e.x) * Math.min(1, dt * 3);
+              if (e.fire <= 0) {
+                if (g.stage === 0) {
+                  e.fire = 0.07;
+                  for (let k = 0; k < 6; k++) {
+                    shootBullet(e.x, e.y, e.t * 2.6 + (k * Math.PI) / 3, 3.0, 300, "rice");
+                    shootBullet(e.x, e.y, -e.t * 2.6 + (k * Math.PI) / 3, 2.4, 50, "rice");
+                  }
+                } else if (g.stage === 1) {
+                  e.fire = 0.32;
+                  const n = 30;
+                  const off = Math.random() * 0.2;
+                  for (let i = 0; i < n; i++) shootBullet(e.x, e.y, off + (i * Math.PI * 2) / n, 2.0, 190);
+                  for (let i = 0; i < 4; i++)
+                    shootBullet(20 + Math.random() * (W - 40), -10, Math.PI / 2 + (Math.random() - 0.5) * 0.4, 2.6, 210, "rice");
+                } else {
+                  e.fire = 0.06;
+                  for (let k = 0; k < 5; k++)
+                    shootBullet(e.x, e.y, e.t * 3.4 + (k * Math.PI * 2) / 5, 3.4, 0, "rice");
+                  if (Math.random() < 0.12)
+                    for (let i = -3; i <= 3; i++) shootBullet(e.x, e.y, aim + i * 0.1, 4.6, 30);
+                }
+              }
+            } else if (e.fire <= 0 && g.stage === 0) {
               e.fire = hpRatio > 0.5 ? 0.14 : 0.1;
               const n = hpRatio > 0.5 ? 9 : 13;
               const base = e.t * (hpRatio > 0.5 ? 1.7 : -2.3);
