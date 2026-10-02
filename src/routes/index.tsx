@@ -27,6 +27,10 @@ const W = 480;
 const H = 680;
 const BOSS_TIME = 45;
 const TUTORIAL = 5;
+const BOSS_ULT = 7;
+const BOSS_ULT_NAMES = ["월광 「크레센트 레퀴엠」", "빙결 「다이아몬드 블리자드」", "홍월 「스칼렛 디스티니」"];
+type Ups = { q: number; w: number; e: number };
+const UP_DESC = { q: "쿨 -15% · 지속 +35%", w: "쿨 -15% · 지속 +35%", e: "쿨 -15% · 효과 +35%" };
 
 type Pal = { dress: string; hair: string; ribbon: string };
 const STAGES = [
@@ -170,8 +174,10 @@ function Game() {
     dodge: 0,
     stage: 0,
   });
+  const [ups, setUps] = useState<Ups>({ q: 0, w: 0, e: 0 });
+  const [upPick, setUpPick] = useState<keyof Ups | null>(null);
   const startRef = useRef<((c: number) => void) | null>(null);
-  const nextRef = useRef<(() => void) | null>(null);
+  const nextRef = useRef<((u: Ups) => void) | null>(null);
   const reviveRef = useRef<(() => void) | null>(null);
   const tapRef = useRef<((k: string) => void) | null>(null);
 
@@ -215,6 +221,9 @@ function Game() {
       slow: 0,
       reflect: 0,
       ultR: 9999,
+      up: { q: 0, w: 0, e: 0 } as Ups,
+      bossUlt: 0,
+      bossUltUsed: false,
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
 
