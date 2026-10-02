@@ -1099,6 +1099,59 @@ function Game() {
         ctx.fillText(`적 출현까지 ${Math.ceil(TUTORIAL - g.t)}초`, W / 2, 440);
         ctx.globalAlpha = 1;
       }
+      // boss ultimate warning
+      if (g.bossUlt > 0) {
+        const a = Math.min(1, g.bossUlt);
+        ctx.fillStyle = `rgba(160,0,30,${0.12 + Math.sin(g.t * 12) * 0.06})`;
+        ctx.fillRect(-20, -20, W + 40, H + 40);
+        if (g.bossUlt > BOSS_ULT - 1.6) {
+          ctx.globalAlpha = a;
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#ff3355";
+          ctx.font = "bold 13px sans-serif";
+          ctx.fillText("⚠ BOSS ULTIMATE ⚠", W / 2, 200);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 22px serif";
+          ctx.fillText(`「${BOSS_ULT_NAMES[g.stage]}」`, W / 2, 230);
+          ctx.globalAlpha = 1;
+        }
+      }
+      // ult cut-in
+      if (g.ult > 0.5) {
+        const p = 1.6 - g.ult; // 0 -> 1.1
+        const slide = p < 0.2 ? 1 - p / 0.2 : p > 0.85 ? (p - 0.85) / 0.25 : 0;
+        const alpha = Math.max(0, 1 - Math.max(0, p - 0.85) / 0.25);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "rgba(10,5,25,0.75)";
+        ctx.beginPath();
+        ctx.moveTo(0, H / 2 - 120);
+        ctx.lineTo(W, H / 2 - 160);
+        ctx.lineTo(W, H / 2 + 80);
+        ctx.lineTo(0, H / 2 + 120);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = pc.pal.dress;
+        ctx.fillRect(0, H / 2 - 124, W, 3);
+        ctx.fillRect(0, H / 2 + 118, W, 3);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(0, H / 2 - 120);
+        ctx.lineTo(W, H / 2 - 160);
+        ctx.lineTo(W, H / 2 + 80);
+        ctx.lineTo(0, H / 2 + 120);
+        ctx.closePath();
+        ctx.clip();
+        drawGirl(150 - slide * 300, H / 2 + 40, 6.5, 0, pc.pal);
+        ctx.restore();
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 30px serif";
+        ctx.fillText(`「${pc.ult.name}」`, W - 24 + slide * 300, H / 2 - 10);
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillStyle = pc.pal.hair;
+        ctx.fillText(`${pc.name} — SPELL CARD`, W - 24 + slide * 300, H / 2 + 18);
+        ctx.globalAlpha = 1;
+      }
       // stage banner
       const bannerStart = g.stage === 0 ? TUTORIAL : 0;
       if (g.running && g.t >= bannerStart && g.t < bannerStart + 2.2) {
@@ -1125,15 +1178,17 @@ function Game() {
       g.reflect = 0;
       g.ult = 0;
       g.power = 0;
+      g.bossUlt = 0;
+      g.bossUltUsed = false;
       g.bullets.length = 0;
       g.shots.length = 0;
       g.enemies.length = 0;
       g.parts.length = 0;
       g.spawn = 0.6;
       g.bossSpawned = false;
-      g.skills.q = { cd: 0, max: c.skills.q[1] };
-      g.skills.w = { cd: 0, max: c.skills.w[1] };
-      g.skills.e = { cd: 0, max: c.skills.e[1] };
+      g.skills.q = { cd: 0, max: c.skills.q[1] * (1 - 0.15 * g.up.q) };
+      g.skills.w = { cd: 0, max: c.skills.w[1] * (1 - 0.15 * g.up.w) };
+      g.skills.e = { cd: 0, max: c.skills.e[1] * (1 - 0.15 * g.up.e) };
       taps.clear();
       g.running = true;
       bgm().play(`stage${g.stage}`);
@@ -1146,9 +1201,13 @@ function Game() {
       g.lives = 3;
       g.score = 0;
       g.gauge = 0;
+      g.up = { q: 0, w: 0, e: 0 };
+      setUps({ q: 0, w: 0, e: 0 });
+      setUpPick(null);
       resetStage();
     };
-    nextRef.current = () => {
+    nextRef.current = (u: Ups) => {
+      g.up = { ...u };
       g.stage = Math.min(STAGES.length - 1, g.stage + 1);
       resetStage();
     };
@@ -1362,11 +1421,46 @@ function Game() {
               {phase !== "title" && (
                 <p className="text-sm font-bold text-foreground">SCORE {hud.score}</p>
               )}
+              {phase === "stageclear" && (
+                <div className="w-full max-w-xs">
+                  <p className="mb-2 text-xs font-bold text-foreground">
+                    스킬 강화 1회 — 하나를 고르세요
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["q", "w", "e"] as const).map((k) => (
+                      <button
+                        key={k}
+                        disabled={ups[k] >= 2}
+                        onClick={() => setUpPick(k)}
+                        className={`rounded-lg border p-2 text-[11px] transition-colors disabled:opacity-40 ${
+                          upPick === k ? "border-primary bg-primary/20" : "border-border bg-card"
+                        }`}
+                      >
+                        <div className="font-black text-foreground">
+                          {k.toUpperCase()} Lv{ups[k] + 1}
+                          {upPick === k ? `→${ups[k] + 2}` : ""}
+                        </div>
+                        <div className="text-muted-foreground">{ch.skills[k][0]}</div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">{UP_DESC[k]}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
-                onClick={() => (phase === "stageclear" ? nextRef.current?.() : setPhase("select"))}
-                className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
+                disabled={phase === "stageclear" && !upPick}
+                onClick={() => {
+                  if (phase === "stageclear") {
+                    if (!upPick) return;
+                    const n = { ...ups, [upPick]: ups[upPick] + 1 };
+                    setUps(n);
+                    setUpPick(null);
+                    nextRef.current?.(n);
+                  } else setPhase("select");
+                }}
+                className="rounded-full bg-primary px-6 py-2 text-sm font-bold text-primary-foreground transition-transform hover:scale-105 disabled:opacity-40"
               >
-                {phase === "title" ? "게임 시작" : phase === "stageclear" ? "다음 스테이지" : "다시 도전"}
+                {phase === "title" ? "게임 시작" : phase === "stageclear" ? "강화하고 다음 스테이지" : "다시 도전"}
               </button>
             </div>
           )}
