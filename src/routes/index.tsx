@@ -148,7 +148,20 @@ type Enemy = {
   fire: number;
   boss: boolean;
   maxHp: number;
+  mid?: boolean;
+  life?: number;
 };
+type Pet = { kind: number; fire: number; a: number };
+type Item = { x: number; y: number; kind: number; t: number };
+const MID_TIME = 25;
+const PET_COL = ["#3fd1b0", "#ff7a2e", "#e8eefc"];
+const MID_LIFE = 10;
+const PET_NAMES = ["청룡", "불사조", "백호"];
+const PET_DESC = [
+  "Q 뇌룡 유도탄 · W 용린 탄 소거 · E 용돌진",
+  "Q 화염 고리 · W 재생의 불꽃 · E 불새 무적",
+  "Q 호조 할퀴기 · W 포효 감속 · E 도약 일격",
+];
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; hue: number };
 
 type Phase = "title" | "select" | "play" | "stageclear" | "clear" | "over" | "continue";
@@ -228,6 +241,10 @@ function Game() {
       up: { q: 0, w: 0, e: 0 } as Ups,
       bossUlt: 0,
       bossUltUsed: false,
+      midSpawned: false,
+      pets: [] as Pet[],
+      items: [] as Item[],
+      petGuard: 0,
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
 
@@ -320,6 +337,45 @@ function Game() {
       g.shake = 12;
     };
 
+    const spawnMid = () => {
+      const hp = stg(g.stage).boss.hp / 2;
+      g.enemies.push({ x: W / 2, y: -40, vx: 1.4, vy: 0, hp, maxHp: hp, r: 24, t: 0, fire: 1, boss: false, mid: true, life: MID_LIFE });
+      g.shake = 8;
+    };
+    const petSkill = (k: "q" | "w" | "e") => {
+      const near = () => {
+        let best: Enemy | null = null;
+        let bd = Infinity;
+        for (const e of g.enemies) {
+          const d = Math.hypot(e.x - g.px, e.y - g.py);
+          if (d < bd) { bd = d; best = e; }
+        }
+        return best;
+      };
+      g.pets.forEach((pt, i) => {
+        const ox = g.px + Math.cos(pt.a) * 40;
+        const oy = g.py + Math.sin(pt.a) * 40;
+        if (pt.kind === 0) {
+          if (k === "q") for (let j = 0; j < 8; j++) g.shots.push({ x: ox, y: oy, vx: Math.cos(-Math.PI / 2 + (j - 3.5) * 0.3) * 8, vy: Math.sin(-Math.PI / 2 + (j - 3.5) * 0.3) * 8, power: 5, homing: true });
+          else if (k === "w") g.petGuard = Math.max(g.petGuard, 2.5);
+          else for (let j = 0; j < 12; j++) g.shots.push({ x: ox + (j - 6) * 3, y: oy, vx: 0, vy: -16, power: 6 });
+          burst(ox, oy, 18, 160);
+        } else if (pt.kind === 1) {
+          if (k === "q") for (let j = 0; j < 16; j++) { const a = (j / 16) * Math.PI * 2; g.shots.push({ x: ox, y: oy, vx: Math.cos(a) * 9, vy: Math.sin(a) * 9, power: 4 }); }
+          else if (k === "w") g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) > 90);
+          else g.inv = Math.max(g.inv, 0.8);
+          burst(ox, oy, 22, 20);
+        } else {
+          const t = near();
+          if (k === "q" && t) { t.hp -= 40; burst(t.x, t.y, 20, 0); }
+          else if (k === "w") g.slow = Math.max(g.slow, 1.5);
+          else if (t) { t.hp -= 80; burst(t.x, t.y, 30, 50); }
+          burst(ox, oy, 18, 0);
+        }
+        void i;
+      });
+    };
+
     const shootBullet = (x: number, y: number, ang: number, sp: number, hue: number, kind: Bullet["kind"] = "ball") => {
       g.bullets.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: kind === "rice" ? 4 : 6, hue, kind });
     };
@@ -340,6 +396,7 @@ function Game() {
       g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) > 90);
       if (g.lives <= 0) {
         g.lives = 0;
+        g.pets = [];
         g.running = false;
         keys.clear();
         bgm().stop();
@@ -365,7 +422,7 @@ function Game() {
       g.score += 300;
       for (const e of g.enemies) {
         if (Math.hypot(e.x - g.px, e.y - g.py) < u.radius + e.r) {
-          e.hp -= e.boss ? u.dmg : 999;
+          e.hp -= e.boss || e.mid ? u.dmg : 999;
           burst(e.x, e.y, 30, 50);
         }
       }
@@ -421,6 +478,7 @@ function Game() {
         g.skills.q.cd = g.skills.q.max;
         g.power = (g.char === 2 ? 3 : 4) * mq;
         burst(g.px, g.py, 20, g.char === 1 ? 195 : 40);
+        petSkill("q");
       }
       if (pressed("w") && g.skills.w.cd === 0) {
         g.skills.w.cd = g.skills.w.max;
@@ -428,9 +486,11 @@ function Game() {
         else if (g.char === 1) g.slow = 3 * mw;
         else g.reflect = 2.5 * mw;
         burst(g.px, g.py, 20, g.char === 2 ? 30 : 200);
+        petSkill("w");
       }
       if (pressed("e") && g.skills.e.cd === 0) {
         g.skills.e.cd = g.skills.e.max;
+        petSkill("e");
         if (g.char === 0) {
           g.dodge = 1 * me;
           burst(g.px, g.py, 20, 300);
@@ -510,7 +570,12 @@ function Game() {
           g.spawn = Math.max(0.3, 1.5 - dv * 0.12);
           spawnEnemy();
         }
+        if (g.t >= MID_TIME && !g.midSpawned) {
+          g.midSpawned = true;
+          spawnMid();
+        }
         if (g.t >= BOSS_TIME) {
+          g.enemies = g.enemies.filter((e) => !e.mid);
           g.bossSpawned = true;
           spawnBoss();
           bgm().play("boss", g.stage * 2);
@@ -520,7 +585,22 @@ function Game() {
       // enemies
       for (const e of g.enemies) {
         e.t += dt;
-        if (e.boss) {
+        if (e.mid) {
+          e.life = (e.life ?? 0) - dt;
+          if (e.y < 150) e.y += 60 * dt;
+          e.x += e.vx * dt * 60;
+          if (e.x < 60 || e.x > W - 60) e.vx *= -1;
+          e.fire -= dt;
+          if (e.fire <= 0) {
+            e.fire = 0.45;
+            const n = 12 + g.stage * 4;
+            const hue = [280, 30, 190][g.stage] ?? 0;
+            for (let i = 0; i < n; i++) shootBullet(e.x, e.y, e.t * 1.3 + (i * Math.PI * 2) / n, 2.2 + g.stage * 0.3, hue, "rice");
+            const aim = Math.atan2(g.py - e.y, g.px - e.x);
+            for (let i = -1; i <= 1; i++) shootBullet(e.x, e.y, aim + i * 0.15, 3.6, hue + 40);
+          }
+          if ((e.life ?? 0) <= 0) { burst(e.x, e.y, 40, 200); e.y = H + 999; e.hp = 1; }
+        } else if (e.boss) {
           if (e.y < 130) e.y += 40 * dt;
           else {
             e.x += e.vx * dt * 60;
@@ -621,7 +701,8 @@ function Game() {
       g.enemies = g.enemies.filter((e) => {
         if (e.hp <= 0) {
           burst(e.x, e.y, e.boss ? 160 : 24, e.boss ? 320 : 50);
-          g.score += e.boss ? 5000 : 100;
+          g.score += e.boss ? 5000 : e.mid ? 2000 : 100;
+          if (e.mid) g.items.push({ x: e.x, y: e.y, kind: g.stage, t: 0 });
           if (e.boss) {
             g.running = false;
             g.bullets.length = 0;
@@ -694,6 +775,33 @@ function Game() {
       }
       g.bullets = g.bullets.filter((b) => b.x > -30 && b.x < W + 30 && b.y > -40 && b.y < H + 30);
 
+      // pet items
+      g.items = g.items.filter((it) => {
+        it.t += dt;
+        it.y += 1.2 * dt * 60;
+        it.x += (g.px - it.x) * (Math.hypot(g.px - it.x, g.py - it.y) < 120 ? dt * 4 : 0);
+        if (Math.hypot(it.x - g.px, it.y - g.py) < 24) {
+          g.pets.push({ kind: it.kind, fire: 0, a: 0 });
+          burst(it.x, it.y, 50, 140);
+          return false;
+        }
+        return it.y < H + 30;
+      });
+      // pets orbit + auto fire
+      g.petGuard = Math.max(0, g.petGuard - dt);
+      g.pets.forEach((pt, i) => {
+        pt.a = g.t * 2.4 + (i * Math.PI * 2) / g.pets.length;
+        pt.fire -= dt;
+        if (pt.fire <= 0) {
+          pt.fire = 0.35;
+          g.shots.push({ x: g.px + Math.cos(pt.a) * 40, y: g.py + Math.sin(pt.a) * 40, vx: 0, vy: -12, power: 1.5 });
+        }
+        if (g.petGuard > 0 && pt.kind === 0) {
+          const ox = g.px + Math.cos(pt.a) * 40, oy = g.py + Math.sin(pt.a) * 40;
+          g.bullets = g.bullets.filter((b) => Math.hypot(b.x - ox, b.y - oy) > 34);
+        }
+      });
+
       for (const p of g.parts) {
         p.x += p.vx;
         p.y += p.vy;
@@ -726,6 +834,85 @@ function Game() {
       im.src = u;
       return im;
     });
+    const drawPet = (kind: number, x: number, y: number, a: number, sc = 1) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(sc, sc);
+      if (kind === 0) {
+        // azure dragon: serpentine body
+        for (let i = 6; i >= 0; i--) {
+          const sx = Math.sin(g.t * 6 - i * 0.8) * 4;
+          ctx.fillStyle = i % 2 ? "#2fa38a" : "#3fd1b0";
+          ctx.beginPath();
+          ctx.arc(sx, i * 3.2, 5 - i * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#4fe6c2";
+        ctx.beginPath();
+        ctx.ellipse(0, -3, 6, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffe08a";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-3, -6); ctx.lineTo(-6, -12);
+        ctx.moveTo(3, -6); ctx.lineTo(6, -12);
+        ctx.stroke();
+        ctx.fillStyle = "#ff3b3b";
+        ctx.fillRect(-3, -4, 1.5, 1.5);
+        ctx.fillRect(1.5, -4, 1.5, 1.5);
+      } else if (kind === 1) {
+        // phoenix: flapping wings + tail plumes
+        const f = Math.sin(g.t * 12) * 0.5;
+        ctx.fillStyle = "rgba(255,90,30,0.9)";
+        for (const s of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.quadraticCurveTo(s * 12, -10 - f * 8, s * 16, -2 + f * 6);
+          ctx.quadraticCurveTo(s * 8, 2, 0, 3);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#ffcf40";
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.ellipse(i * 3, 10, 1.6, 6, i * 0.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#ffe9a0";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 3.5, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ff5a1e";
+        ctx.beginPath();
+        ctx.moveTo(0, -9); ctx.lineTo(2, -4); ctx.lineTo(-2, -4);
+        ctx.fill();
+      } else {
+        // white tiger: head with stripes
+        ctx.fillStyle = "#f4f4f8";
+        ctx.beginPath();
+        ctx.arc(-6, -7, 3, 0, Math.PI * 2);
+        ctx.arc(6, -7, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 9, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#1c1c2a";
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.moveTo(0, -8); ctx.lineTo(0, -4);
+        ctx.moveTo(-8, -1); ctx.lineTo(-4, 0);
+        ctx.moveTo(8, -1); ctx.lineTo(4, 0);
+        ctx.moveTo(-7, 3); ctx.lineTo(-4, 3);
+        ctx.moveTo(7, 3); ctx.lineTo(4, 3);
+        ctx.stroke();
+        ctx.fillStyle = "#4fb4ff";
+        ctx.fillRect(-4, -2, 2, 2);
+        ctx.fillRect(2, -2, 2, 2);
+        ctx.fillStyle = "#ff8fa8";
+        ctx.fillRect(-1, 2, 2, 1.5);
+      }
+      void a;
+      ctx.restore();
+    };
     const drawGirl = (x: number, y: number, scale: number, ult: number, pal: Pal = PLAYER_PAL) => {
       ctx.save();
       ctx.translate(x, y);
@@ -1007,8 +1194,58 @@ function Game() {
         ctx.restore();
       }
 
+      // pet items
+      for (const it of g.items) {
+        ctx.save();
+        ctx.translate(it.x, it.y);
+        ctx.rotate(it.t * 2);
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = PET_COL[it.kind] ?? "#fff";
+        ctx.fillStyle = PET_COL[it.kind] ?? "#fff";
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) { const a = (i * Math.PI) / 4; const rr = i % 2 ? 6 : 13; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(PET_NAMES[it.kind] ?? "", it.x, it.y - 18);
+      }
+      // pets
+      g.pets.forEach((pt) => drawPet(pt.kind, g.px + Math.cos(pt.a) * 40, g.py + Math.sin(pt.a) * 40, pt.a));
       // enemies
       for (const e of g.enemies) {
+        if (e.mid) {
+          ctx.save();
+          ctx.translate(e.x, e.y);
+          const col = PET_COL[g.stage] ?? "#fff";
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = col;
+          ctx.rotate(e.t);
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) { const a = (i * Math.PI) / 3; ctx.lineTo(Math.cos(a) * e.r, Math.sin(a) * e.r); }
+          ctx.closePath();
+          ctx.stroke();
+          ctx.rotate(-e.t * 2);
+          ctx.fillStyle = col;
+          ctx.globalAlpha = 0.5;
+          ctx.fillRect(-12, -12, 24, 24);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+          drawPet(g.stage, e.x, e.y, e.t, 1.3);
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.fillRect(e.x - 30, e.y - 40, 60, 5);
+          ctx.fillStyle = col;
+          ctx.fillRect(e.x - 30, e.y - 40, (60 * e.hp) / e.maxHp, 5);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 11px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(`중간 보스 ${Math.max(0, e.life ?? 0).toFixed(1)}s`, e.x, e.y - 46);
+          continue;
+        }
         if (e.boss) drawBoss(e);
         else {
           const st = stg(g.stage);
@@ -1367,6 +1604,9 @@ function Game() {
       g.power = 0;
       g.bossUlt = 0;
       g.bossUltUsed = false;
+      g.midSpawned = false;
+      g.items.length = 0;
+      g.petGuard = 0;
       g.bullets.length = 0;
       g.shots.length = 0;
       g.enemies.length = 0;
@@ -1389,6 +1629,7 @@ function Game() {
       g.score = 0;
       g.gauge = 0;
       g.up = { q: 0, w: 0, e: 0 };
+      g.pets = [];
       setUps({ q: 0, w: 0, e: 0 });
       setUpPick(null);
       resetStage();
