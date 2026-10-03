@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Bgm } from "@/lib/bgm";
+import haruArt from "@/assets/haru.jpg.asset.json";
+import yukiArt from "@/assets/yuki.jpg.asset.json";
+import karenArt from "@/assets/karen.jpg.asset.json";
+const ART_URLS = [haruArt.url, yukiArt.url, karenArt.url];
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -32,7 +36,7 @@ const BOSS_ULT_NAMES = ["월광 「크레센트 레퀴엠」", "빙결 「다이
 type Ups = { q: number; w: number; e: number };
 const UP_DESC = { q: "쿨 -15% · 지속 +35%", w: "쿨 -15% · 지속 +35%", e: "쿨 -15% · 효과 +35%" };
 
-type Pal = { dress: string; hair: string; ribbon: string };
+type Pal = { dress: string; hair: string; ribbon: string; sleeve?: string; acc?: "fox" | "flower" | "sword" };
 const STAGES = [
   {
     name: "스테이지 1 — 환상향의 밤하늘",
@@ -94,7 +98,7 @@ const CHARS: Char[] = [
   {
     name: "하루",
     title: "무녀 · 밸런스형",
-    pal: PLAYER_PAL,
+    pal: { dress: "#d8263a", hair: "#2a2026", ribbon: "#e8344a", sleeve: "#fbf7f2", acc: "fox" },
     speed: 1,
     shot: "#9be8ff",
     skills: { q: ["강화 발출", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
@@ -104,7 +108,7 @@ const CHARS: Char[] = [
   {
     name: "유키",
     title: "얼음 마법사 · 제어형",
-    pal: { dress: "#3aa0e8", hair: "#e8f6ff", ribbon: "#1c4d7a" },
+    pal: { dress: "#8fd3ee", hair: "#bfe4ee", ribbon: "#2f4f8a", sleeve: "#e4f6fb", acc: "flower" },
     speed: 0.95,
     shot: "#c8f0ff",
     skills: { q: ["유도 빙탄", 7], w: ["시간 감속", 12], e: ["순간이동", 8] },
@@ -114,7 +118,7 @@ const CHARS: Char[] = [
   {
     name: "카렌",
     title: "홍염 검사 · 근접형",
-    pal: { dress: "#c2261d", hair: "#2a1a1a", ribbon: "#ffb347" },
+    pal: { dress: "#7a1424", hair: "#2b1d3d", ribbon: "#c8203a", sleeve: "#f6b3a8", acc: "sword" },
     speed: 1.1,
     shot: "#ffcf70",
     skills: { q: ["화염 레이저", 8], w: ["반사 결계", 10], e: ["돌진", 6] },
@@ -717,6 +721,11 @@ function Game() {
       });
     };
 
+    const artImgs = ART_URLS.map((u) => {
+      const im = new Image();
+      im.src = u;
+      return im;
+    });
     const drawGirl = (x: number, y: number, scale: number, ult: number, pal: Pal = PLAYER_PAL) => {
       ctx.save();
       ctx.translate(x, y);
@@ -744,8 +753,17 @@ function Game() {
       ctx.lineTo(-13, 18 + flap);
       ctx.closePath();
       ctx.fill();
+      if (pal.acc === "sword") {
+        ctx.save();
+        ctx.rotate(-0.5);
+        ctx.fillStyle = "#f2c6d4";
+        ctx.fillRect(-1.2, -6, 2.4, 34);
+        ctx.fillStyle = "#3a1a22";
+        ctx.fillRect(-1.6, -14, 3.2, 8);
+        ctx.restore();
+      }
       // sleeves
-      ctx.fillStyle = "#fff3f7";
+      ctx.fillStyle = pal.sleeve ?? "#fff3f7";
       ctx.beginPath();
       ctx.ellipse(-9, 0, 5, 7, -0.3, 0, Math.PI * 2);
       ctx.ellipse(9, 0, 5, 7, 0.3, 0, Math.PI * 2);
@@ -787,6 +805,43 @@ function Game() {
       ctx.ellipse(-8, -23, 4, 2.6, -0.4, 0, Math.PI * 2);
       ctx.ellipse(8, -23, 4, 2.6, 0.4, 0, Math.PI * 2);
       ctx.fill();
+      if (pal.acc === "fox") {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.ellipse(6, -26, 5, 3.5, 0.5, 0, Math.PI * 2);
+        ctx.moveTo(3, -29); ctx.lineTo(4, -34); ctx.lineTo(7, -29);
+        ctx.moveTo(7, -28); ctx.lineTo(11, -32); ctx.lineTo(10, -26);
+        ctx.fill();
+        ctx.fillStyle = "#d8263a";
+        ctx.fillRect(4, -26.5, 4, 1);
+        // floating fox fire
+        ctx.fillStyle = "rgba(255,110,40,0.85)";
+        ctx.beginPath();
+        ctx.ellipse(-15, -14 + Math.sin(g.t * 6) * 2, 2.4, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (pal.acc === "flower") {
+        ctx.fillStyle = "#eaf8ff";
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(7 + Math.cos(a) * 2.2, -22 + Math.sin(a) * 2.2, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#5aa8e0";
+        ctx.beginPath();
+        ctx.arc(7, -22, 1, 0, Math.PI * 2);
+        ctx.fill();
+        // butterflies
+        ctx.fillStyle = "rgba(60,110,200,0.8)";
+        for (let i = 0; i < 2; i++) {
+          const bx = Math.cos(g.t * 2 + i * 3) * 18, by = -10 + Math.sin(g.t * 3 + i) * 8;
+          const f = Math.abs(Math.sin(g.t * 12 + i)) * 2 + 0.5;
+          ctx.beginPath();
+          ctx.ellipse(bx - f, by, f, 2, 0, 0, Math.PI * 2);
+          ctx.ellipse(bx + f, by, f, 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       // eyes
       ctx.fillStyle = "#2b2140";
       ctx.beginPath();
@@ -1263,7 +1318,17 @@ function Game() {
         ctx.lineTo(0, H / 2 + 120);
         ctx.closePath();
         ctx.clip();
-        drawGirl(150 - slide * 300, H / 2 + 40, 6.5, 0, pc.pal);
+        const art = artImgs[g.char];
+        if (art && art.complete && art.naturalWidth > 0) {
+          const ah = 480;
+          const aw = (art.naturalWidth / art.naturalHeight) * ah;
+          ctx.globalAlpha = alpha * 0.25;
+          ctx.drawImage(art, 150 - aw / 2 - slide * 300 + 30, H / 2 - 260 + p * 30, aw * 1.15, ah * 1.15);
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(art, 150 - aw / 2 - slide * 300, H / 2 - 220 - p * 20, aw, ah);
+        } else {
+          drawGirl(150 - slide * 300, H / 2 + 40, 6.5, 0, pc.pal);
+        }
         ctx.restore();
         ctx.textAlign = "right";
         ctx.fillStyle = "#ffffff";
@@ -1460,8 +1525,7 @@ function Game() {
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.hair }} />
-                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.dress }} />
+                      <img src={ART_URLS[i]} alt={c.name} className="h-10 w-10 rounded-full border border-border object-cover object-top" />
                       <span className="font-black text-foreground">{c.name}</span>
                       <span className="text-[11px] text-muted-foreground">{c.title}</span>
                     </div>
