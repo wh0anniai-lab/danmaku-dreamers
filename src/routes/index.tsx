@@ -928,13 +928,26 @@ function Game() {
       ctx.globalAlpha = 1;
 
       // player shots
+      const qlv = g.power > 0 ? g.up.q : 0;
       for (const s of g.shots) {
-        ctx.fillStyle = s.power > 3 ? "#ffe066" : CHARS[g.char]!.shot;
+        const boosted = qlv > 0 && s.power >= 3;
+        ctx.fillStyle = boosted
+          ? qlv >= 2
+            ? `hsl(${(g.t * 300 + s.x) % 360} 100% 70%)`
+            : "#ffd23f"
+          : s.power > 3
+            ? "#ffe066"
+            : CHARS[g.char]!.shot;
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate(Math.atan2(s.vy, s.vx) + Math.PI / 2);
+        if (boosted) {
+          ctx.shadowColor = ctx.fillStyle as string;
+          ctx.shadowBlur = 6 + qlv * 6;
+        }
+        const sc = boosted ? 1 + qlv * 0.35 : 1;
         ctx.beginPath();
-        ctx.ellipse(0, 0, 2.6, 7, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, 2.6 * sc, 7 * sc, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
@@ -1034,18 +1047,37 @@ function Game() {
       const pc = CHARS[g.char]!;
       // slow-time tint
       if (g.slow > 0) {
-        ctx.fillStyle = `rgba(150,220,255,${Math.min(0.18, g.slow * 0.1)})`;
+        const lv = g.up.w;
+        const tint = lv >= 2 ? "200,170,255" : lv === 1 ? "120,255,240" : "150,220,255";
+        ctx.fillStyle = `rgba(${tint},${Math.min(0.18 + lv * 0.05, g.slow * 0.1)})`;
         ctx.fillRect(-20, -20, W + 40, H + 40);
+        if (lv >= 1) {
+          // frozen clock rings
+          ctx.strokeStyle = `rgba(${tint},0.35)`;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < lv + 1; i++) {
+            ctx.beginPath();
+            ctx.arc(W / 2, H / 2, ((g.t * 80 + i * 140) % 420) + 20, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
       }
       // laser
       if (g.char === 2 && g.power > 0) {
-        const wv = 10 + Math.sin(g.t * 40) * 3;
+        const lv = g.up.q;
+        const wv = 10 + lv * 5 + Math.sin(g.t * 40) * 3;
+        const edge = lv >= 2 ? `hsla(${(g.t * 240) % 360},100%,60%,0)` : lv === 1 ? "rgba(255,210,40,0)" : "rgba(255,120,40,0)";
+        const core = lv >= 2 ? `hsla(${(g.t * 240) % 360},100%,85%,0.95)` : lv === 1 ? "rgba(255,255,220,0.98)" : "rgba(255,245,200,0.95)";
         const lg = ctx.createLinearGradient(g.px - wv, 0, g.px + wv, 0);
-        lg.addColorStop(0, "rgba(255,120,40,0)");
-        lg.addColorStop(0.5, "rgba(255,245,200,0.95)");
-        lg.addColorStop(1, "rgba(255,120,40,0)");
+        lg.addColorStop(0, edge);
+        lg.addColorStop(0.5, core);
+        lg.addColorStop(1, edge);
         ctx.fillStyle = lg;
         ctx.fillRect(g.px - wv * 1.6, 0, wv * 3.2, g.py - 18);
+        if (lv >= 1) {
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.fillRect(g.px - 2, 0, 4, g.py - 18);
+        }
       }
       // ult range ring
       if (g.ult > 0 && g.ultR < 2000) {
@@ -1079,28 +1111,70 @@ function Game() {
           ctx.stroke();
         }
       }
-      if (g.reflect > 0) {
-        ctx.strokeStyle = `hsl(30 100% 65% / ${0.5 + Math.sin(g.t * 16) * 0.25})`;
-        ctx.lineWidth = 3;
+      // upgraded skills: Lv1 = gold accents, Lv2 = rainbow + extra rings
+      const upHue = (lv: number, base: number) => (lv >= 2 ? (g.t * 240) % 360 : lv === 1 ? 45 : base);
+      const ring = (r: number, hue: number, a: number, lw: number, rot = 0, dash = false) => {
+        ctx.strokeStyle = `hsl(${hue} 100% 70% / ${a})`;
+        ctx.lineWidth = lw;
+        if (dash) ctx.setLineDash([6, 6]);
         ctx.beginPath();
-        ctx.arc(g.px, g.py, 60, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      if (g.shield > 0) {
-        ctx.strokeStyle = `hsl(200 100% 75% / ${0.4 + Math.sin(g.t * 10) * 0.2})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(g.px, g.py, 26, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      if (g.dodge > 0) {
-        ctx.strokeStyle = "hsl(300 100% 80% / 0.7)";
-        ctx.setLineDash([6, 6]);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(g.px, g.py, 34, g.t * 6, g.t * 6 + Math.PI * 1.5);
+        if (dash) ctx.arc(g.px, g.py, r, rot, rot + Math.PI * 1.5);
+        else ctx.arc(g.px, g.py, r, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
+      };
+      const glowOn = (lv: number, hue: number) => {
+        ctx.shadowColor = `hsl(${hue} 100% 65%)`;
+        ctx.shadowBlur = lv * 12;
+      };
+      if (g.reflect > 0) {
+        const lv = g.up.w;
+        const h = upHue(lv, 30);
+        glowOn(lv, h);
+        ring(60, h, 0.5 + Math.sin(g.t * 16) * 0.25, 3 + lv * 2);
+        if (lv >= 1) ring(68, h, 0.35, 2, g.t * 5, true);
+        if (lv >= 2) ring(76, (h + 120) % 360, 0.35, 2, -g.t * 7, true);
+        ctx.shadowBlur = 0;
+      }
+      if (g.shield > 0) {
+        const lv = g.up.w;
+        const h = upHue(lv, 200);
+        glowOn(lv, h);
+        ring(26, h, 0.4 + Math.sin(g.t * 10) * 0.2, 3 + lv * 1.5);
+        if (lv >= 1) {
+          // hexagram seal
+          ctx.strokeStyle = `hsl(${h} 100% 75% / 0.5)`;
+          ctx.lineWidth = 1.5;
+          for (const off of lv >= 2 ? [0, Math.PI / 3] : [0]) {
+            ctx.beginPath();
+            for (let i = 0; i <= 3; i++) {
+              const a = g.t * 2 + off + (i * Math.PI * 2) / 3;
+              const x = g.px + Math.cos(a) * 34;
+              const y = g.py + Math.sin(a) * 34;
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+          }
+        }
+        ctx.shadowBlur = 0;
+      }
+      if (g.dodge > 0) {
+        const lv = g.up.e;
+        const h = upHue(lv, 300);
+        glowOn(lv, h);
+        ring(34, h, 0.7, 2 + lv, g.t * 6, true);
+        if (lv >= 1) ring(42, h, 0.5, 2, -g.t * 8, true);
+        if (lv >= 2) ring(50, (h + 180) % 360, 0.45, 2, g.t * 10, true);
+        ctx.shadowBlur = 0;
+      }
+      // after-image trail for upgraded E dash/blink
+      if (g.up.e > 0 && g.char !== 0 && g.inv > 0 && g.ult === 0) {
+        const h = upHue(g.up.e, g.char === 1 ? 195 : 20);
+        ctx.fillStyle = `hsl(${h} 100% 70% / 0.25)`;
+        ctx.beginPath();
+        ctx.arc(g.px, g.py, 18 + g.up.e * 6 + Math.sin(g.t * 20) * 3, 0, Math.PI * 2);
+        ctx.fill();
       }
       // hitbox
       ctx.fillStyle = "#fff";
