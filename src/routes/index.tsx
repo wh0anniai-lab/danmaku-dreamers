@@ -1525,8 +1525,7 @@ function Game() {
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.hair }} />
-                      <span className="inline-block h-4 w-4 rounded-full" style={{ background: c.pal.dress }} />
+                      <img src={ART_URLS[i]} alt={c.name} className="h-10 w-10 rounded-full border border-border object-cover object-top" />
                       <span className="font-black text-foreground">{c.name}</span>
                       <span className="text-[11px] text-muted-foreground">{c.title}</span>
                     </div>
