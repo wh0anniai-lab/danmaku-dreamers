@@ -152,6 +152,7 @@ type Enemy = {
   life?: number;
 };
 type Pet = { kind: number; fire: number; a: number };
+const LIFE_KILLS = 30;
 type Item = { x: number; y: number; kind: number; t: number };
 const MID_TIME = 25;
 const PET_COL = ["#3fd1b0", "#ff7a2e", "#e8eefc"];
@@ -244,6 +245,7 @@ function Game() {
       midSpawned: false,
       pets: [] as Pet[],
       items: [] as Item[],
+      kills: 0,
       petGuard: 0,
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
@@ -710,6 +712,10 @@ function Game() {
           burst(e.x, e.y, e.boss ? 160 : 24, e.boss ? 320 : 50);
           g.score += e.boss ? 5000 : e.mid ? 2000 : 100;
           if (e.mid) g.items.push({ x: e.x, y: e.y, kind: g.stage, t: 0 });
+          if (!e.boss && !e.mid) {
+            g.kills += 1;
+            if (g.kills % LIFE_KILLS === 0) g.items.push({ x: e.x, y: e.y, kind: -1, t: 0 });
+          }
           if (e.boss) {
             g.running = false;
             g.bullets.length = 0;
@@ -788,7 +794,8 @@ function Game() {
         it.y += 1.2 * dt * 60;
         it.x += (g.px - it.x) * (Math.hypot(g.px - it.x, g.py - it.y) < 120 ? dt * 4 : 0);
         if (Math.hypot(it.x - g.px, it.y - g.py) < 24) {
-          g.pets.push({ kind: it.kind, fire: 0, a: 0 });
+          if (it.kind < 0) g.lives += 1;
+          else g.pets.push({ kind: it.kind, fire: 0, a: 0 });
           burst(it.x, it.y, 50, 140);
           return false;
         }
@@ -1203,6 +1210,25 @@ function Game() {
 
       // pet items
       for (const it of g.items) {
+        if (it.kind < 0) {
+          ctx.save();
+          ctx.translate(it.x, it.y);
+          const sc = 1 + Math.sin(it.t * 6) * 0.12;
+          ctx.scale(sc, sc);
+          ctx.shadowBlur = 18;
+          ctx.shadowColor = "#ff4d7a";
+          ctx.fillStyle = "#ff4d7a";
+          ctx.font = "bold 26px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("♥", 0, 0);
+          ctx.restore();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 11px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("1UP", it.x, it.y - 18);
+          continue;
+        }
         ctx.save();
         ctx.translate(it.x, it.y);
         ctx.rotate(it.t * 2);
@@ -1633,6 +1659,7 @@ function Game() {
       g.char = c;
       g.stage = 0;
       g.lives = 3;
+      g.kills = 0;
       g.score = 0;
       g.gauge = 0;
       g.up = { q: 0, w: 0, e: 0 };
@@ -1916,7 +1943,7 @@ function Game() {
             <div className="mt-1 flex items-center justify-between text-sm">
               <span className="text-muted-foreground">목숨</span>
               <span className="text-foreground">
-                {"♥".repeat(Math.max(0, hud.lives))}
+                {hud.lives > 5 ? `♥ × ${hud.lives}` : "♥".repeat(Math.max(0, hud.lives))}
                 <span className="text-muted-foreground">
                   {"♡".repeat(Math.max(0, 3 - hud.lives))}
                 </span>
