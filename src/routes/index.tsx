@@ -248,9 +248,16 @@ function Game() {
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
 
+    const HANGUL: Record<string, string> = { "ㅂ": "q", "ㅃ": "q", "ㅈ": "w", "ㅉ": "w", "ㄷ": "e", "ㄸ": "e", "ㄱ": "r", "ㄲ": "r" };
+    const keyOf = (e: KeyboardEvent) => {
+      const c = e.code;
+      if (c === "KeyQ" || c === "KeyW" || c === "KeyE" || c === "KeyR") return c.slice(3).toLowerCase();
+      const k = e.key.toLowerCase();
+      return HANGUL[k] ?? k;
+    };
     const onDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.tagName === "INPUT") return;
-      const k = e.key.toLowerCase();
+      const k = keyOf(e);
       if (
         ["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "q", "w", "e", "r", "shift"].includes(k)
       )
@@ -258,7 +265,7 @@ function Game() {
       keys.add(k);
       if (g.running && ["q", "w", "e", "r"].includes(k)) taps.add(k);
     };
-    const onUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
+    const onUp = (e: KeyboardEvent) => keys.delete(keyOf(e));
     window.addEventListener("keydown", onDown);
     window.addEventListener("keyup", onUp);
 
