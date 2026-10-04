@@ -338,7 +338,7 @@ function Game() {
     };
 
     const spawnMid = () => {
-      const hp = stg(g.stage).boss.hp / 2;
+      const hp = Math.round(stg(g.stage).boss.hp / 3);
       g.enemies.push({ x: W / 2, y: -40, vx: 1.4, vy: 0, hp, maxHp: hp, r: 24, t: 0, fire: 1, boss: false, mid: true, life: MID_LIFE });
       g.shake = 8;
     };
