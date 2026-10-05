@@ -552,11 +552,13 @@ function Game() {
       g.shotCd -= dt;
       if (g.shotCd <= 0) {
         if (g.char === 0) {
-          g.shotCd = g.power > 0 ? 0.055 : 0.1;
-          const pw = g.power > 0 ? 4 : 2;
-          const spread = g.power > 0 ? [-0.22, -0.08, 0.08, 0.22] : [-0.05, 0.05];
-          for (const a of spread)
-            g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: pw });
+          // Haru Q: tracking amulets on top of the normal stream
+          g.shotCd = 0.1;
+          for (const a of [-0.05, 0.05])
+            g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: 2 });
+          if (g.power > 0)
+            for (const a of [-1.2, -0.6, 0.6, 1.2])
+              g.shots.push({ x: g.px, y: g.py - 10, vx: Math.sin(a) * 7, vy: -7, power: 3, homing: true });
         } else if (g.char === 1) {
           g.shotCd = 0.09;
           if (g.power > 0)
@@ -569,6 +571,16 @@ function Game() {
           g.shotCd = 0.08;
           g.shots.push({ x: g.px, y: g.py - 18, vx: 0, vy: -15, power: 3 });
         }
+        // basic shot upgrades (P items)
+        const sl = g.shotLv;
+        const sp = 1 + sl * 0.15;
+        if (sl >= 1) for (const a of [-0.16, 0.16]) g.shots.push({ x: g.px, y: g.py - 14, vx: Math.sin(a) * 10, vy: -13, power: 1.6 * sp });
+        if (sl >= 2) for (const a of [-0.32, 0.32]) g.shots.push({ x: g.px, y: g.py - 12, vx: Math.sin(a) * 10, vy: -12, power: 1.6 * sp });
+        if (sl >= 3) {
+          g.shots.push({ x: g.px, y: g.py - 20, vx: 0, vy: -16, power: 3 });
+          g.shotSide = (g.shotSide + 1) % 3;
+          if (g.shotSide === 0) for (const s of [-1, 1]) g.shots.push({ x: g.px + s * 18, y: g.py, vx: s * 3, vy: -9, power: 2.5, homing: true });
+        }
       }
 
       // spawning
@@ -579,17 +591,10 @@ function Game() {
           g.spawn = Math.max(0.3, 1.5 - dv * 0.12);
           spawnEnemy();
         }
-        if (g.t >= MID_TIME && !g.midSpawned) {
-          g.midSpawned = true;
-          spawnMid();
+        if (!g.carrierSpawned && g.t >= g.carrierAt) {
+          g.carrierSpawned = true;
+          g.enemies.push({ x: 60 + Math.random() * (W - 120), y: -30, vx: 0, vy: 1.3, hp: 30 + g.stage * 20, maxHp: 30 + g.stage * 20, r: 16, t: 0, fire: 0, boss: false, carrier: true });
         }
-        if (g.t >= BOSS_TIME) {
-          g.enemies = g.enemies.filter((e) => !e.mid);
-          g.bossSpawned = true;
-          spawnBoss();
-          bgm().play("boss", g.stage * 2);
-        }
-      }
 
       // enemies
       for (const e of g.enemies) {
@@ -609,6 +614,9 @@ function Game() {
             for (let i = -1; i <= 1; i++) shootBullet(e.x, e.y, aim + i * 0.15, 3.6, hue + 40);
           }
           if ((e.life ?? 0) <= 0) { burst(e.x, e.y, 40, 200); e.y = H + 999; e.hp = 1; }
+        } else if (e.carrier) {
+          e.y += e.vy * dt * 60;
+          e.x += Math.sin(e.t * 2.5) * 1.6 * dt * 60;
         } else if (e.boss) {
           if (e.y < 130) e.y += 40 * dt;
           else {
@@ -712,7 +720,8 @@ function Game() {
           burst(e.x, e.y, e.boss ? 160 : 24, e.boss ? 320 : 50);
           g.score += e.boss ? 5000 : e.mid ? 2000 : 100;
           if (e.mid) g.items.push({ x: e.x, y: e.y, kind: g.stage, t: 0 });
-          if (!e.boss && !e.mid) {
+          if (e.carrier) g.items.push({ x: e.x, y: e.y, kind: -2, t: 0 });
+          else if (!e.boss && !e.mid) {
             g.kills += 1;
             if (g.kills % LIFE_KILLS === 0) g.items.push({ x: e.x, y: e.y, kind: -1, t: 0 });
           }
@@ -794,7 +803,10 @@ function Game() {
         it.y += 1.2 * dt * 60;
         it.x += (g.px - it.x) * (Math.hypot(g.px - it.x, g.py - it.y) < 120 ? dt * 4 : 0);
         if (Math.hypot(it.x - g.px, it.y - g.py) < 24) {
-          if (it.kind < 0) g.lives += 1;
+          if (it.kind === -2) {
+            g.shotLv = Math.min(3, g.shotLv + 1);
+            if (g.shotLv === 3) { g.shake = 8; burst(g.px, g.py, 90, 0); }
+          } else if (it.kind < 0) g.lives += 1;
           else g.pets.push({ kind: it.kind, fire: 0, a: 0 });
           burst(it.x, it.y, 50, 140);
           return false;
@@ -1187,29 +1199,69 @@ function Game() {
       const qlv = g.power > 0 ? g.up.q : 0;
       for (const s of g.shots) {
         const boosted = qlv > 0 && s.power >= 3;
+        const sl = g.shotLv;
         ctx.fillStyle = boosted
           ? qlv >= 2
             ? `hsl(${(g.t * 300 + s.x) % 360} 100% 70%)`
             : "#ffd23f"
-          : s.power > 3
-            ? "#ffe066"
-            : CHARS[g.char]!.shot;
+          : sl >= 3
+            ? `hsl(${(g.t * 420 + s.x * 2 + s.y) % 360} 100% 68%)`
+            : sl === 2
+              ? "#8ff7ff"
+              : s.power > 3
+                ? "#ffe066"
+                : CHARS[g.char]!.shot;
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate(Math.atan2(s.vy, s.vx) + Math.PI / 2);
         if (boosted) {
           ctx.shadowColor = ctx.fillStyle as string;
           ctx.shadowBlur = 6 + qlv * 6;
+        } else if (sl >= 2) {
+          ctx.shadowColor = ctx.fillStyle as string;
+          ctx.shadowBlur = sl >= 3 ? 16 : 8;
         }
-        const sc = boosted ? 1 + qlv * 0.35 : 1;
+        const sc = (boosted ? 1 + qlv * 0.35 : 1) * (1 + sl * 0.12);
+        if (sl >= 3) {
+          // comet trail
+          ctx.globalAlpha = 0.35;
+          ctx.beginPath();
+          ctx.ellipse(0, 12 * sc, 2 * sc, 12 * sc, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
         ctx.beginPath();
         ctx.ellipse(0, 0, 2.6 * sc, 7 * sc, 0, 0, Math.PI * 2);
         ctx.fill();
+        if (sl >= 3) {
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 1.1 * sc, 4 * sc, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       }
 
       // pet items
       for (const it of g.items) {
+        if (it.kind === -2) {
+          ctx.save();
+          ctx.translate(it.x, it.y);
+          ctx.rotate(it.t * 3);
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = "#7dffb0";
+          ctx.fillStyle = `hsl(${(it.t * 240) % 360} 95% 62%)`;
+          ctx.fillRect(-10, -10, 20, 20);
+          ctx.restore();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 13px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("P", it.x, it.y);
+          ctx.font = "bold 11px sans-serif";
+          ctx.fillText("POWER UP", it.x, it.y - 20);
+          continue;
+        }
         if (it.kind < 0) {
           ctx.save();
           ctx.translate(it.x, it.y);
@@ -1249,6 +1301,25 @@ function Game() {
       g.pets.forEach((pt) => drawPet(pt.kind, g.px + Math.cos(pt.a) * 40, g.py + Math.sin(pt.a) * 40, pt.a));
       // enemies
       for (const e of g.enemies) {
+        if (e.carrier) {
+          ctx.save();
+          ctx.translate(e.x, e.y);
+          ctx.shadowBlur = 22;
+          ctx.shadowColor = "#7dffb0";
+          ctx.rotate(e.t * 3);
+          ctx.fillStyle = `hsl(${(e.t * 200) % 360} 90% 65%)`;
+          ctx.beginPath();
+          for (let i = 0; i < 10; i++) { const a = (i * Math.PI) / 5; const rr = i % 2 ? e.r * 0.5 : e.r; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 12px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("P", e.x, e.y);
+          continue;
+        }
         if (e.mid) {
           ctx.save();
           ctx.translate(e.x, e.y);
