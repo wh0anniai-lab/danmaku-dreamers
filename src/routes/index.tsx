@@ -101,7 +101,7 @@ const CHARS: Char[] = [
     pal: { dress: "#d8263a", hair: "#2a2026", ribbon: "#e8344a", sleeve: "#fbf7f2", acc: "fox" },
     speed: 1,
     shot: "#9be8ff",
-    skills: { q: ["강화 발출", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
+    skills: { q: ["추적 부적", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
     ult: { name: "몽환봉인", radius: 9999, dmg: 160, label: "맵 전체 소거 · 피해 약" },
     desc: ["Q 4초간 4갈래 강화 사격", "W 1회 피격 무효 방어막", "E 1초간 자동으로 탄 회피"],
   },
@@ -149,6 +149,7 @@ type Enemy = {
   boss: boolean;
   maxHp: number;
   mid?: boolean;
+  carrier?: boolean;
   life?: number;
 };
 type Pet = { kind: number; fire: number; a: number };
@@ -247,6 +248,10 @@ function Game() {
       items: [] as Item[],
       kills: 0,
       petGuard: 0,
+      shotLv: 0,
+      shotSide: 0,
+      carrierAt: 20,
+      carrierSpawned: false,
     };
     const bgm = () => (bgmRef.current ??= new Bgm());
 
@@ -406,6 +411,7 @@ function Game() {
       if (g.lives <= 0) {
         g.lives = 0;
         g.pets = [];
+        g.shotLv = 0;
         g.running = false;
         keys.clear();
         bgm().stop();
@@ -595,6 +601,18 @@ function Game() {
           g.carrierSpawned = true;
           g.enemies.push({ x: 60 + Math.random() * (W - 120), y: -30, vx: 0, vy: 1.3, hp: 30 + g.stage * 20, maxHp: 30 + g.stage * 20, r: 16, t: 0, fire: 0, boss: false, carrier: true });
         }
+        if (g.t >= MID_TIME && !g.midSpawned) {
+          g.midSpawned = true;
+          spawnMid();
+        }
+        if (g.t >= BOSS_TIME) {
+          g.enemies = g.enemies.filter((e) => !e.mid && !e.carrier);
+          g.bossSpawned = true;
+          spawnBoss();
+          bgm().play("boss", g.stage * 2);
+        }
+      }
+
 
       // enemies
       for (const e of g.enemies) {
