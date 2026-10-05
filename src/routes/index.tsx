@@ -1727,6 +1727,8 @@ function Game() {
       g.bossUlt = 0;
       g.bossUltUsed = false;
       g.midSpawned = false;
+      g.carrierSpawned = false;
+      g.carrierAt = 8 + Math.random() * 30;
       g.items.length = 0;
       g.petGuard = 0;
       g.bullets.length = 0;
@@ -1753,6 +1755,7 @@ function Game() {
       g.gauge = 0;
       g.up = { q: 0, w: 0, e: 0 };
       g.pets = [];
+      g.shotLv = 0;
       setUps({ q: 0, w: 0, e: 0 });
       setUpPick(null);
       resetStage();
