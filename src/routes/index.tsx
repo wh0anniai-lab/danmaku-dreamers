@@ -6,6 +6,9 @@ import yukiArt from "@/assets/yuki.jpg.asset.json";
 import karenArt from "@/assets/karen.jpg.asset.json";
 const ART_URLS = [haruArt.url, yukiArt.url, karenArt.url];
 
+type Quality = "low" | "mid" | "high";
+const hslCache: Record<number, string> = {};
+
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -177,6 +180,12 @@ function Game() {
   const [coin, setCoin] = useState("");
   const [coinErr, setCoinErr] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [quality, setQuality] = useState<Quality>("high");
+  const qRef = useRef<Quality>("high");
+  useEffect(() => {
+    const v = localStorage.getItem("fxQuality");
+    if (v === "low" || v === "mid" || v === "high") { setQuality(v); qRef.current = v; }
+  }, []);
   const bgmRef = useRef<Bgm | null>(null);
   const [hud, setHud] = useState({
     lives: 3,
@@ -205,6 +214,30 @@ function Game() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
+    // shadowBlur is the most expensive canvas op: only honor it on "high"
+    const sbDesc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "shadowBlur")!;
+    Object.defineProperty(ctx, "shadowBlur", {
+      get: () => sbDesc.get!.call(ctx),
+      set: (v: number) => sbDesc.set!.call(ctx, qRef.current === "high" ? Math.min(v, 14) : 0),
+    });
+    const spriteCache = new Map<string, HTMLCanvasElement>();
+    const bulletSprite = (hue: number, r: number) => {
+      const h = Math.round(hue / 10) * 10, rr = Math.round(r);
+      const key = h + ":" + rr;
+      let c = spriteCache.get(key);
+      if (!c) {
+        c = document.createElement("canvas");
+        const R = rr + 3; c.width = c.height = R * 2;
+        const x = c.getContext("2d")!;
+        const grd = x.createRadialGradient(R, R, 1, R, R, R);
+        grd.addColorStop(0, "#ffffff");
+        grd.addColorStop(0.5, `hsl(${h} 100% 70%)`);
+        grd.addColorStop(1, `hsl(${h} 100% 50% / 0)`);
+        x.fillStyle = grd; x.beginPath(); x.arc(R, R, R, 0, Math.PI * 2); x.fill();
+        spriteCache.set(key, c);
+      }
+      return c;
+    };
     const keys = new Set<string>();
     const taps = new Set<string>();
 
@@ -307,8 +340,11 @@ function Game() {
     const pressed = (k: string) => keys.has(k) || taps.has(k);
 
     const burst = (x: number, y: number, n: number, hue: number) => {
+      const q = qRef.current;
+      const cap = q === "high" ? 220 : q === "mid" ? 110 : 40;
+      n = Math.ceil(n * (q === "high" ? 0.8 : q === "mid" ? 0.45 : 0.18));
       for (let i = 0; i < n; i++) {
-        if (g.parts.length >= 260) break;
+        if (g.parts.length >= cap) break;
         const a = Math.random() * Math.PI * 2;
         const s = 0.5 + Math.random() * 3.5;
         g.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, hue });
@@ -757,14 +793,15 @@ function Game() {
       // player shots
       for (const s of g.shots) {
         if (s.homing && g.enemies.length) {
-          let tgt = g.enemies[0]!;
-          let bd = Infinity;
-          for (const e of g.enemies) {
-            const d = Math.hypot(e.x - s.x, e.y - s.y);
-            if (d < bd) {
-              bd = d;
-              tgt = e;
+          let tgt = (s as { tgt?: (typeof g.enemies)[number] }).tgt;
+          if (!tgt || tgt.hp <= 0 || tgt.y > H || Math.random() < 0.1) {
+            let bd = Infinity;
+            tgt = g.enemies[0]!;
+            for (const e of g.enemies) {
+              const dx = e.x - s.x, dy = e.y - s.y, d = dx * dx + dy * dy;
+              if (d < bd) { bd = d; tgt = e; }
             }
+            (s as { tgt?: typeof tgt }).tgt = tgt;
           }
           const a = Math.atan2(tgt.y - s.y, tgt.x - s.x);
           s.vx += (Math.cos(a) * 11 - s.vx) * 0.15;
@@ -773,7 +810,8 @@ function Game() {
         s.x += s.vx * dt * 60;
         s.y += s.vy * dt * 60;
         for (const e of g.enemies) {
-          if (Math.hypot(s.x - e.x, s.y - e.y) < e.r + (s.doll ? 18 : 4)) {
+          const hr = e.r + (s.doll ? 18 : 4), ddx = s.x - e.x, ddy = s.y - e.y;
+          if (ddx * ddx + ddy * ddy < hr * hr) {
             if (s.doll) {
               const R = 60 * (1 + g.up.q * 0.35);
               const dmg = 45 * (1 + g.up.q * 0.35);
@@ -785,7 +823,7 @@ function Game() {
               break;
             }
             e.hp -= s.power;
-            if (g.parts.length < 120) burst(s.x, s.y, 1, 50);
+            if (g.parts.length < 60 && Math.random() < 0.4) burst(s.x, s.y, 1, 50);
             s.y = -999;
             break;
           }
@@ -1099,6 +1137,8 @@ function Game() {
 
     const drawBoss = (e: Enemy) => {
       const st = stg(g.stage);
+      const QL = qRef.current;
+      const bgN = QL === "high" ? 1 : QL === "mid" ? 0.6 : 0.25;
       ctx.save();
       ctx.translate(e.x, e.y);
       const puls = 1 + Math.sin(g.t * 4) * 0.04;
@@ -1187,14 +1227,14 @@ function Game() {
       ctx.fillRect(-20, -20, W + 40, H + 40);
       if (st.fx === "stars") {
         ctx.fillStyle = "rgba(255,255,255,0.35)";
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < 60 * bgN; i++) {
           const sx = (i * 97) % W;
           const sy = ((i * 173 + g.t * (40 + (i % 5) * 20)) % (H + 20)) - 10;
           ctx.fillRect(sx, sy, 2, 2 + (i % 3));
         }
       } else if (st.fx === "snow") {
         ctx.fillStyle = "rgba(230,248,255,0.55)";
-        for (let i = 0; i < 70; i++) {
+        for (let i = 0; i < 70 * bgN; i++) {
           const sy = ((i * 131 + g.t * (25 + (i % 4) * 12)) % (H + 20)) - 10;
           const sx = ((i * 89) % W) + Math.sin(g.t + i) * 12;
           ctx.beginPath();
@@ -1202,7 +1242,7 @@ function Game() {
           ctx.fill();
         }
       } else {
-        for (let i = 0; i < 55; i++) {
+        for (let i = 0; i < 55 * bgN; i++) {
           const sy = H - (((i * 151 + g.t * (50 + (i % 5) * 18)) % (H + 20)) - 10);
           const sx = ((i * 71) % W) + Math.sin(g.t * 2 + i) * 8;
           ctx.fillStyle = `hsl(${20 + (i % 4) * 8} 100% 60% / 0.6)`;
@@ -1218,13 +1258,16 @@ function Game() {
       // particles
       for (const p of g.parts) {
         ctx.globalAlpha = Math.max(0, p.life);
-        ctx.fillStyle = `hsl(${p.hue} 90% 70%)`;
+        const ph = Math.round(p.hue / 15) * 15;
+        ctx.fillStyle = hslCache[ph] ??= `hsl(${ph} 90% 70%)`;
         ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
       }
       ctx.globalAlpha = 1;
 
       // player shots
       const qlv = g.power > 0 ? g.up.q : 0;
+      const rainbow = `hsl(${Math.round((g.t * 420) % 360 / 20) * 20} 100% 68%)`;
+      const rainbowQ = `hsl(${Math.round((g.t * 300) % 360 / 20) * 20} 100% 70%)`;
       for (const s of g.shots) {
         if (s.doll) {
           const lv = g.up.q;
@@ -1255,10 +1298,10 @@ function Game() {
         const sl = g.shotLv;
         ctx.fillStyle = boosted
           ? qlv >= 2
-            ? `hsl(${(g.t * 300 + s.x) % 360} 100% 70%)`
+            ? rainbowQ
             : "#ffd23f"
           : sl >= 3
-            ? `hsl(${(g.t * 420 + s.x * 2 + s.y) % 360} 100% 68%)`
+            ? rainbow
             : sl === 2
               ? "#8ff7ff"
               : s.power > 3
@@ -1272,7 +1315,7 @@ function Game() {
           ctx.shadowBlur = 6 + qlv * 6;
         }
         const sc = (boosted ? 1 + qlv * 0.35 : 1) * (1 + sl * 0.12);
-        if (sl >= 2) {
+        if (sl >= 2 && QL !== "low") {
           // cheap glow halo instead of shadowBlur
           ctx.globalAlpha = 0.22;
           ctx.beginPath();
@@ -1280,7 +1323,7 @@ function Game() {
           ctx.fill();
           ctx.globalAlpha = 1;
         }
-        if (sl >= 3) {
+        if (sl >= 3 && QL === "high") {
           // comet trail
           ctx.globalAlpha = 0.35;
           ctx.beginPath();
@@ -1291,7 +1334,7 @@ function Game() {
         ctx.beginPath();
         ctx.ellipse(0, 0, 2.6 * sc, 7 * sc, 0, 0, Math.PI * 2);
         ctx.fill();
-        if (sl >= 3) {
+        if (sl >= 3 && QL !== "low") {
           ctx.fillStyle = "#ffffff";
           ctx.beginPath();
           ctx.ellipse(0, 0, 1.1 * sc, 4 * sc, 0, 0, Math.PI * 2);
@@ -1487,14 +1530,15 @@ function Game() {
           ctx.fill();
           ctx.restore();
         } else {
-          const grd = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, b.r + 3);
-          grd.addColorStop(0, "#ffffff");
-          grd.addColorStop(0.5, `hsl(${b.hue} 100% 70%)`);
-          grd.addColorStop(1, `hsl(${b.hue} 100% 50% / 0)`);
-          ctx.fillStyle = grd;
-          ctx.beginPath();
-          ctx.arc(b.x, b.y, b.r + 3, 0, Math.PI * 2);
-          ctx.fill();
+          if (QL === "low") {
+            ctx.fillStyle = `hsl(${Math.round(b.hue / 10) * 10} 100% 70%)`;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            const spr = bulletSprite(b.hue, b.r);
+            ctx.drawImage(spr, b.x - spr.width / 2, b.y - spr.height / 2);
+          }
         }
       }
 
@@ -1884,6 +1928,18 @@ function Game() {
         <p className="text-xs text-muted-foreground">
           방향키 · 화면 드래그로 이동 · 사격은 자동 · 3개 스테이지, 각 45초에 보스 등장
         </p>
+        <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span>효과 품질</span>
+          {(["low", "mid", "high"] as const).map((q) => (
+            <button
+              key={q}
+              onClick={() => { setQuality(q); qRef.current = q; localStorage.setItem("fxQuality", q); }}
+              className={`rounded-full border px-2 py-0.5 ${quality === q ? "border-primary text-foreground" : "border-border hover:text-foreground"}`}
+            >
+              {q === "low" ? "저사양" : q === "mid" ? "보통" : "고품질"}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => {
             const m = !muted;
