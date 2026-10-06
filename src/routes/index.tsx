@@ -101,7 +101,7 @@ const CHARS: Char[] = [
     pal: { dress: "#d8263a", hair: "#2a2026", ribbon: "#e8344a", sleeve: "#fbf7f2", acc: "fox" },
     speed: 1,
     shot: "#9be8ff",
-    skills: { q: ["추적 부적", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
+    skills: { q: ["거대 인형", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
     ult: { name: "몽환봉인", radius: 9999, dmg: 160, label: "맵 전체 소거 · 피해 약" },
     desc: ["Q 4초간 4갈래 강화 사격", "W 1회 피격 무효 방어막", "E 1초간 자동으로 탄 회피"],
   },
@@ -136,7 +136,7 @@ type Bullet = {
   hue: number;
   kind: "ball" | "rice";
 };
-type Shot = { x: number; y: number; vx: number; vy: number; power: number; homing?: boolean };
+type Shot = { x: number; y: number; vx: number; vy: number; power: number; homing?: boolean; doll?: boolean };
 type Enemy = {
   x: number;
   y: number;
@@ -308,6 +308,7 @@ function Game() {
 
     const burst = (x: number, y: number, n: number, hue: number) => {
       for (let i = 0; i < n; i++) {
+        if (g.parts.length >= 260) break;
         const a = Math.random() * Math.PI * 2;
         const s = 0.5 + Math.random() * 3.5;
         g.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, hue });
@@ -562,9 +563,8 @@ function Game() {
           g.shotCd = 0.1;
           for (const a of [-0.05, 0.05])
             g.shots.push({ x: g.px, y: g.py - 16, vx: Math.sin(a) * 9, vy: -13, power: 2 });
-          if (g.power > 0)
-            for (const a of [-1.2, -0.6, 0.6, 1.2])
-              g.shots.push({ x: g.px, y: g.py - 10, vx: Math.sin(a) * 7, vy: -7, power: 3, homing: true });
+          if (g.power > 0 && !g.shots.some((s) => s.doll))
+            g.shots.push({ x: g.px, y: g.py - 24, vx: 0, vy: -6, power: 0, doll: true });
         } else if (g.char === 1) {
           g.shotCd = 0.09;
           if (g.power > 0)
@@ -773,9 +773,19 @@ function Game() {
         s.x += s.vx * dt * 60;
         s.y += s.vy * dt * 60;
         for (const e of g.enemies) {
-          if (Math.hypot(s.x - e.x, s.y - e.y) < e.r + 4) {
+          if (Math.hypot(s.x - e.x, s.y - e.y) < e.r + (s.doll ? 18 : 4)) {
+            if (s.doll) {
+              const R = 60 * (1 + g.up.q * 0.35);
+              const dmg = 45 * (1 + g.up.q * 0.35);
+              for (const o of g.enemies) if (Math.hypot(o.x - s.x, o.y - s.y) < R + o.r) o.hp -= dmg;
+              g.bullets = g.bullets.filter((b) => Math.hypot(b.x - s.x, b.y - s.y) > R);
+              burst(s.x, s.y, 30, 350);
+              g.shake = Math.max(g.shake, 5);
+              s.y = -999;
+              break;
+            }
             e.hp -= s.power;
-            burst(s.x, s.y, 2, 50);
+            if (g.parts.length < 120) burst(s.x, s.y, 1, 50);
             s.y = -999;
             break;
           }
@@ -1216,6 +1226,31 @@ function Game() {
       // player shots
       const qlv = g.power > 0 ? g.up.q : 0;
       for (const s of g.shots) {
+        if (s.doll) {
+          const lv = g.up.q;
+          ctx.save();
+          ctx.translate(s.x, s.y);
+          ctx.rotate(Math.sin(g.t * 6) * 0.15);
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = lv >= 2 ? `hsl(${(g.t * 300) % 360} 100% 70%)` : lv ? "#ffd23f" : "#ff6b8b";
+          ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#c8102e"; // dress
+          ctx.beginPath(); ctx.moveTo(-14, 18); ctx.lineTo(14, 18); ctx.lineTo(7, -2); ctx.lineTo(-7, -2); ctx.fill();
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(-7, -2, 14, 5);
+          ctx.fillStyle = "#ffe0cc"; // face
+          ctx.beginPath(); ctx.arc(0, -10, 9, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#1a1a24"; // hair
+          ctx.beginPath(); ctx.arc(0, -13, 10, Math.PI, 0); ctx.fill();
+          ctx.fillRect(-10, -13, 3, 14); ctx.fillRect(7, -13, 3, 14);
+          ctx.fillStyle = "#c8102e"; // bow
+          ctx.beginPath(); ctx.ellipse(-8, -22, 6, 3.5, -0.4, 0, Math.PI * 2); ctx.ellipse(8, -22, 6, 3.5, 0.4, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#1a1a24";
+          ctx.fillRect(-4, -11, 2, 2); ctx.fillRect(2, -11, 2, 2);
+          ctx.restore();
+          continue;
+        }
         const boosted = qlv > 0 && s.power >= 3;
         const sl = g.shotLv;
         ctx.fillStyle = boosted
@@ -1235,11 +1270,16 @@ function Game() {
         if (boosted) {
           ctx.shadowColor = ctx.fillStyle as string;
           ctx.shadowBlur = 6 + qlv * 6;
-        } else if (sl >= 2) {
-          ctx.shadowColor = ctx.fillStyle as string;
-          ctx.shadowBlur = sl >= 3 ? 16 : 8;
         }
         const sc = (boosted ? 1 + qlv * 0.35 : 1) * (1 + sl * 0.12);
+        if (sl >= 2) {
+          // cheap glow halo instead of shadowBlur
+          ctx.globalAlpha = 0.22;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 6 * sc, 11 * sc, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
         if (sl >= 3) {
           // comet trail
           ctx.globalAlpha = 0.35;
