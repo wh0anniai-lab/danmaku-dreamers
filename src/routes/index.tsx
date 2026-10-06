@@ -1137,8 +1137,6 @@ function Game() {
 
     const drawBoss = (e: Enemy) => {
       const st = stg(g.stage);
-      const QL = qRef.current;
-      const bgN = QL === "high" ? 1 : QL === "mid" ? 0.6 : 0.25;
       ctx.save();
       ctx.translate(e.x, e.y);
       const puls = 1 + Math.sin(g.t * 4) * 0.04;
@@ -1216,6 +1214,8 @@ function Game() {
 
     const draw = () => {
       const st = stg(g.stage);
+      const QL = qRef.current;
+      const bgN = QL === "high" ? 1 : QL === "mid" ? 0.6 : 0.25;
       ctx.save();
       if (g.shake > 0)
         ctx.translate((Math.random() - 0.5) * g.shake, (Math.random() - 0.5) * g.shake);
