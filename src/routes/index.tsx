@@ -217,6 +217,7 @@ function Game() {
     // shadowBlur is the most expensive canvas op: only honor it on "high"
     const sbDesc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, "shadowBlur")!;
     Object.defineProperty(ctx, "shadowBlur", {
+      configurable: true,
       get: () => sbDesc.get!.call(ctx),
       set: (v: number) => sbDesc.set!.call(ctx, qRef.current === "high" ? Math.min(v, 14) : 0),
     });
