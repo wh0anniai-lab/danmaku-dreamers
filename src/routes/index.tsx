@@ -1,10 +1,35 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Bgm } from "@/lib/bgm";
-import haruArt from "@/assets/haru.jpg.asset.json";
-import yukiArt from "@/assets/yuki.jpg.asset.json";
-import karenArt from "@/assets/karen.jpg.asset.json";
-const ART_URLS = [haruArt.url, yukiArt.url, karenArt.url];
+import {
+  beanSprite,
+  candySprite,
+  cube,
+  drawBossArt,
+  drawEnemy,
+  drawHero,
+  drawPetArt,
+  drawStageBg,
+  drawStageFx,
+  drawSunBuddy,
+  glossyHeart,
+  glossyStar,
+  HERO_COL,
+  INK,
+  label,
+  setLowDetail,
+  spike,
+  starPath,
+} from "@/lib/art";
+import haruPose from "@/assets/char/haru-pose.jpg";
+import yukiPose from "@/assets/char/yuki-pose.jpg";
+import karenPose from "@/assets/char/karen-pose.jpg";
+import haruFace from "@/assets/char/haru-face.jpg";
+import yukiFace from "@/assets/char/yuki-face.jpg";
+import karenFace from "@/assets/char/karen-face.jpg";
+const ART_URLS = [haruPose, yukiPose, karenPose];
+const FACE_URLS = [haruFace, yukiFace, karenFace];
+const TAU = Math.PI * 2;
 
 type Quality = "low" | "mid" | "high";
 const hslCache: Record<number, string> = {};
@@ -34,65 +59,31 @@ const W = 480;
 const H = 680;
 const BOSS_TIME = 45;
 const TUTORIAL = 5;
-const BOSS_ULT = 7;
 const BOSS_ULT_NAMES = ["월광 「크레센트 레퀴엠」", "빙결 「다이아몬드 블리자드」", "홍월 「스칼렛 디스티니」"];
+// boss phases: skill unlocks at 50% hp, phase 2 (+ blast-zone ultimate) at 30% hp
+const BOSS_SKILL_HP = 0.5;
+const BOSS_P2_HP = 0.3;
+const BOSS_CAST = 0.9; // telegraph before a boss skill fires
+const BOSS_SKILL_NAMES = ["월광 「초승달 낫」", "빙결 「서리 감옥」", "홍월 「스칼렛 랜스」"];
+const BOSS_ULT_CD = 11;
+const ZONE_FILL = 2.2; // seconds for a blast zone's gauge to fill before it explodes
+const ZONE_BOOM = 0.35;
+// circle zone when r > 0, otherwise a w×h rect; x/y is the center
+type Zone = { x: number; y: number; r: number; w: number; h: number; delay: number; t: number; boom: number };
 type Ups = { q: number; w: number; e: number };
 const UP_DESC = { q: "쿨 -15% · 지속 +35%", w: "쿨 -15% · 지속 +35%", e: "쿨 -15% · 효과 +35%" };
 
-type Pal = { dress: string; hair: string; ribbon: string; sleeve?: string; acc?: "fox" | "flower" | "sword" };
 const STAGES = [
-  {
-    name: "스테이지 1 — 환상향의 밤하늘",
-    bg: ["#150a25", "#22103a", "#3b1550"],
-    fx: "stars" as const,
-    enemy: "#ff8ac4",
-    shape: "star" as const,
-    boss: {
-      name: "밤의 마녀 · 루나",
-      hp: 1600,
-      wing: "rgba(120,60,180,0.55)",
-      hat: "#2b1b46",
-      pal: { dress: "#2b1b46", hair: "#f5e27a", ribbon: "#ff4d6d" },
-    },
-  },
-  {
-    name: "스테이지 2 — 얼어붙은 안개 호수",
-    bg: ["#061a2b", "#0b3450", "#1b5a78"],
-    fx: "snow" as const,
-    enemy: "#8fe3ff",
-    shape: "fairy" as const,
-    boss: {
-      name: "얼음 요정 여왕 · 시엘",
-      hp: 2300,
-      wing: "rgba(150,225,255,0.55)",
-      hat: "#1c4d7a",
-      pal: { dress: "#3aa0e8", hair: "#dff6ff", ribbon: "#1c4d7a" },
-    },
-  },
-  {
-    name: "스테이지 3 — 홍염의 저택",
-    bg: ["#240606", "#4a0d0d", "#7a1f10"],
-    fx: "embers" as const,
-    enemy: "#ffb347",
-    shape: "spike" as const,
-    boss: {
-      name: "홍마의 아가씨 · 스칼렛",
-      hp: 3200,
-      wing: "rgba(40,10,20,0.75)",
-      hat: "#f4e9ee",
-      pal: { dress: "#b0122a", hair: "#c9b8ff", ribbon: "#b0122a" },
-    },
-  },
+  { name: "스테이지 1 — 달빛 꽃밭", boss: { name: "달그림자 부엉이 · 루나", hp: 1600 } },
+  { name: "스테이지 2 — 얼음 사탕 호수", boss: { name: "서리 여우 여왕 · 시엘", hp: 2300 } },
+  { name: "스테이지 3 — 딸기 홍차 저택", boss: { name: "홍차 박쥐 공주 · 스칼렛", hp: 3200 } },
 ];
 const stg = (i: number) => STAGES[Math.max(0, Math.min(STAGES.length - 1, i))]!;
-const PLAYER_PAL: Pal = { dress: "#e8467c", hair: "#7d59ea", ribbon: "#ff4d6d" };
 
 type Char = {
   name: string;
   title: string;
-  pal: Pal;
   speed: number;
-  shot: string;
   skills: { q: [string, number]; w: [string, number]; e: [string, number] };
   ult: { name: string; radius: number; dmg: number; label: string };
   desc: string[];
@@ -100,33 +91,27 @@ type Char = {
 const CHARS: Char[] = [
   {
     name: "하루",
-    title: "무녀 · 밸런스형",
-    pal: { dress: "#d8263a", hair: "#2a2026", ribbon: "#e8344a", sleeve: "#fbf7f2", acc: "fox" },
+    title: "햇살 정령 · 밸런스형",
     speed: 1,
-    shot: "#9be8ff",
-    skills: { q: ["거대 인형", 6], w: ["방어막", 9], e: ["자동 회피", 11] },
-    ult: { name: "몽환봉인", radius: 9999, dmg: 160, label: "맵 전체 소거 · 피해 약" },
-    desc: ["Q 4초간 4갈래 강화 사격", "W 1회 피격 무효 방어막", "E 1초간 자동으로 탄 회피"],
+    skills: { q: ["햇살 분신", 6], w: ["새싹 방패", 9], e: ["두근 스텝", 11] },
+    ult: { name: "선라이즈 피날레", radius: 9999, dmg: 160, label: "맵 전체 소거 · 피해 약" },
+    desc: ["Q 4초간 햇살 분신 소환 + 강화 사격", "W 1회 피격 무효 새싹 방패", "E 1초간 두근두근 스텝으로 자동 회피"],
   },
   {
     name: "유키",
-    title: "얼음 마법사 · 제어형",
-    pal: { dress: "#8fd3ee", hair: "#bfe4ee", ribbon: "#2f4f8a", sleeve: "#e4f6fb", acc: "flower" },
+    title: "별자리 현자 · 제어형",
     speed: 0.95,
-    shot: "#c8f0ff",
-    skills: { q: ["유도 빙탄", 7], w: ["시간 감속", 12], e: ["순간이동", 8] },
-    ult: { name: "절대영도", radius: W / 2, dmg: 420, label: "맵 절반 반경 소거 · 피해 중" },
-    desc: ["Q 4초간 적을 쫓는 유도탄", "W 3초간 모든 탄 속도 1/3", "E 이동 방향으로 순간이동 + 무적"],
+    skills: { q: ["성좌 큐브탄", 7], w: ["천구 정지", 12], e: ["성문 도약", 8] },
+    ult: { name: "아스트랄 결계", radius: W / 2, dmg: 420, label: "맵 절반 반경 소거 · 피해 중" },
+    desc: ["Q 4초간 적을 쫓는 성좌 큐브탄", "W 3초간 모든 탄 속도 1/3", "E 이동 방향으로 성문 도약 + 무적"],
   },
   {
     name: "카렌",
-    title: "홍염 검사 · 근접형",
-    pal: { dress: "#7a1424", hair: "#2b1d3d", ribbon: "#c8203a", sleeve: "#f6b3a8", acc: "sword" },
+    title: "물감 아티스트 · 근접형",
     speed: 1.1,
-    shot: "#ffcf70",
-    skills: { q: ["화염 레이저", 8], w: ["반사 결계", 10], e: ["돌진", 6] },
-    ult: { name: "홍련참", radius: W / 3, dmg: 900, label: "맵 1/3 반경 소거 · 피해 강" },
-    desc: ["Q 3초간 탄을 태우는 관통 레이저", "W 2.5초간 주변 탄을 적에게 반사", "E 짧은 돌진 + 경로의 탄 소거"],
+    skills: { q: ["물감 붓질", 8], w: ["팔레트 반사", 10], e: ["스플래시 대시", 6] },
+    ult: { name: "캔버스 스플래시", radius: W / 3, dmg: 900, label: "맵 1/3 반경 소거 · 피해 강" },
+    desc: ["Q 3초간 탄을 지우는 관통 물감 붓질", "W 2.5초간 주변 탄을 적에게 반사", "E 짧은 돌진 + 경로의 탄 소거"],
   },
 ];
 
@@ -159,7 +144,7 @@ type Pet = { kind: number; fire: number; a: number };
 const LIFE_KILLS = 30;
 type Item = { x: number; y: number; kind: number; t: number };
 const MID_TIME = 25;
-const PET_COL = ["#3fd1b0", "#ff7a2e", "#e8eefc"];
+const PET_COL = ["#3fd1b0", "#ff7a2e", "#b9a3e6"];
 const MID_LIFE = 10;
 const PET_NAMES = ["청룡", "불사조", "백호"];
 const PET_DESC = [
@@ -198,6 +183,7 @@ function Game() {
     gauge: 0,
     bossHp: 0,
     bossMax: 0,
+    bossPhase: 0,
     shield: 0,
     dodge: 0,
     stage: 0,
@@ -221,24 +207,6 @@ function Game() {
       get: () => sbDesc.get!.call(ctx),
       set: (v: number) => sbDesc.set!.call(ctx, qRef.current === "high" ? Math.min(v, 14) : 0),
     });
-    const spriteCache = new Map<string, HTMLCanvasElement>();
-    const bulletSprite = (hue: number, r: number) => {
-      const h = Math.round(hue / 10) * 10, rr = Math.round(r);
-      const key = h + ":" + rr;
-      let c = spriteCache.get(key);
-      if (!c) {
-        c = document.createElement("canvas");
-        const R = rr + 3; c.width = c.height = R * 2;
-        const x = c.getContext("2d")!;
-        const grd = x.createRadialGradient(R, R, 1, R, R, R);
-        grd.addColorStop(0, "#ffffff");
-        grd.addColorStop(0.5, `hsl(${h} 100% 70%)`);
-        grd.addColorStop(1, `hsl(${h} 100% 50% / 0)`);
-        x.fillStyle = grd; x.beginPath(); x.arc(R, R, R, 0, Math.PI * 2); x.fill();
-        spriteCache.set(key, c);
-      }
-      return c;
-    };
     const keys = new Set<string>();
     const taps = new Set<string>();
 
@@ -275,8 +243,13 @@ function Game() {
       reflect: 0,
       ultR: 9999,
       up: { q: 0, w: 0, e: 0 } as Ups,
-      bossUlt: 0,
-      bossUltUsed: false,
+      bossPhase: 0, // 0 normal · 1 skill unlocked (≤50%) · 2 phase 2 (≤30%)
+      bossSkill: 0,
+      bossCast: 0,
+      bossUltCd: 0,
+      zones: [] as Zone[],
+      banner: { text: "", sub: "", t: 0 },
+      trail: { x0: 0, y0: 0, x1: 0, y1: 0, t: 0 }, // E blink/dash path, for effects
       midSpawned: false,
       pets: [] as Pet[],
       items: [] as Item[],
@@ -457,6 +430,59 @@ function Game() {
       }
     };
 
+    // signature boss skill, available once the boss is at or below 50% hp
+    const bossSkill = (e: Enemy) => {
+      const aim = Math.atan2(g.py - e.y, g.px - e.x);
+      g.shake = Math.max(g.shake, 8);
+      if (g.stage === 0) {
+        // layered crescent fans aimed at the player
+        for (let w = 0; w < 3; w++)
+          for (let i = -5; i <= 5; i++) shootBullet(e.x, e.y, aim + i * 0.11, 2.4 + w * 0.6, 50 + w * 20);
+      } else if (g.stage === 1) {
+        // ring around the player closing inward, with two gaps to slip through
+        const n = 24;
+        const gap = Math.floor(Math.random() * n);
+        for (let i = 0; i < n; i++) {
+          if (i % 12 === gap % 12) continue;
+          const a = (i * Math.PI * 2) / n;
+          const x = g.px + Math.cos(a) * 160;
+          const y = g.py + Math.sin(a) * 160;
+          if (x < 0 || x > W || y < 0 || y > H) continue;
+          shootBullet(x, y, a + Math.PI, 1.5, 200, "rice");
+        }
+      } else {
+        // five lances of accelerating rice bullets
+        for (let l = -2; l <= 2; l++)
+          for (let i = 0; i < 8; i++) shootBullet(e.x, e.y, aim + l * 0.17, 3 + i * 0.5, 0, "rice");
+      }
+    };
+
+    // blast-zone ultimate (phase 2): zones fill up, then explode
+    const spawnZones = () => {
+      const zone = (x: number, y: number, r: number, w: number, h: number, delay: number) =>
+        g.zones.push({ x: Math.max(20, Math.min(W - 20, x)), y: Math.max(40, Math.min(H - 20, y)), r, w, h, delay, t: 0, boom: -1 });
+      if (g.stage === 0) {
+        // moonfall: first on the player, the rest scattered and staggered
+        zone(g.px, g.py, 64, 0, 0, 0);
+        for (let i = 1; i < 6; i++) zone(40 + Math.random() * (W - 80), 220 + Math.random() * (H - 280), 64, 0, 0, i * 0.3);
+      } else if (g.stage === 1) {
+        // frost grid: horizontal bands, then vertical bands
+        for (const y of [270, 430, 590]) zone(W / 2, y, 0, W, 80, 0);
+        for (const x of [W * 0.25, W * 0.75]) zone(x, H / 2 + 60, 0, 90, H, 1.2);
+      } else {
+        // crimson fate: blast on the player, then a ring around where they stood
+        const cx = g.px;
+        const cy = g.py;
+        zone(cx, cy, 95, 0, 0, 0);
+        for (let i = 0; i < 8; i++) {
+          const a = (i * Math.PI * 2) / 8;
+          zone(cx + Math.cos(a) * 175, cy + Math.sin(a) * 175, 55, 0, 0, 0.9);
+        }
+      }
+    };
+    const inZone = (z: Zone, x: number, y: number) =>
+      z.r > 0 ? Math.hypot(x - z.x, y - z.y) < z.r : Math.abs(x - z.x) < z.w / 2 && Math.abs(y - z.y) < z.h / 2;
+
     const useUlt = () => {
       if (g.gauge < 1 || g.ult > 0) return;
       const u = CHARS[g.char]!.ult;
@@ -515,7 +541,8 @@ function Game() {
       g.slow = Math.max(0, g.slow - dt);
       g.reflect = Math.max(0, g.reflect - dt);
       g.ult = Math.max(0, g.ult - dt);
-      g.bossUlt = Math.max(0, g.bossUlt - dt);
+      g.banner.t = Math.max(0, g.banner.t - dt);
+      g.trail.t = Math.max(0, g.trail.t - dt);
       // ultimate keeps erasing every bullet inside its range while active
       if (g.ult > 0) g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) >= g.ultR);
       g.power = Math.max(0, g.power - dt);
@@ -571,7 +598,8 @@ function Game() {
               return Math.hypot(b.x - (ox + vx * t), b.y - (oy + vy * t)) > 26 + 8 * g.up.e;
             });
           }
-          burst(g.px, g.py, 24, g.char === 1 ? 195 : 20);
+          burst(g.px, g.py, 24, g.char === 1 ? 210 : 290);
+          g.trail = { x0: ox, y0: oy, x1: g.px, y1: g.py, t: 0.6 };
         }
       }
       if (pressed("r")) useUlt();
@@ -675,47 +703,56 @@ function Game() {
         } else if (e.boss) {
           if (e.y < 130) e.y += 40 * dt;
           else {
-            e.x += e.vx * dt * 60;
+            e.x += e.vx * dt * 60 * (g.bossPhase === 2 ? 1.4 : 1);
             if (e.x < 70 || e.x > W - 70) e.vx *= -1;
           }
           if (e.y >= 120) {
             e.fire -= dt;
             const hpRatio = e.hp / e.maxHp;
             const aim = Math.atan2(g.py - e.y, g.px - e.x);
-            if (hpRatio <= 0.1 && !g.bossUltUsed) {
-              g.bossUltUsed = true;
-              g.bossUlt = BOSS_ULT;
-              g.bullets.length = 0;
-              g.shake = 20;
-              burst(e.x, e.y, 120, 0);
-              e.fire = 1.2; // wind-up
+            if (g.bossPhase < 1 && hpRatio <= BOSS_SKILL_HP) {
+              g.bossPhase = 1;
+              g.bossSkill = 1.2;
+              g.banner = { text: "BOSS SKILL", sub: BOSS_SKILL_NAMES[g.stage]!, t: 2 };
+              g.shake = 10;
+              burst(e.x, e.y, 60, 50);
             }
-            if (g.bossUlt > 0) {
-              // boss is invulnerable-ish during wind-up, then fires its ultimate
-              e.x += (W / 2 - e.x) * Math.min(1, dt * 3);
-              if (e.fire <= 0) {
-                if (g.stage === 0) {
-                  e.fire = 0.07;
-                  for (let k = 0; k < 6; k++) {
-                    shootBullet(e.x, e.y, e.t * 2.6 + (k * Math.PI) / 3, 3.0, 300, "rice");
-                    shootBullet(e.x, e.y, -e.t * 2.6 + (k * Math.PI) / 3, 2.4, 50, "rice");
-                  }
-                } else if (g.stage === 1) {
-                  e.fire = 0.32;
-                  const n = 30;
-                  const off = Math.random() * 0.2;
-                  for (let i = 0; i < n; i++) shootBullet(e.x, e.y, off + (i * Math.PI * 2) / n, 2.0, 190);
-                  for (let i = 0; i < 4; i++)
-                    shootBullet(20 + Math.random() * (W - 40), -10, Math.PI / 2 + (Math.random() - 0.5) * 0.4, 2.6, 210, "rice");
-                } else {
-                  e.fire = 0.06;
-                  for (let k = 0; k < 5; k++)
-                    shootBullet(e.x, e.y, e.t * 3.4 + (k * Math.PI * 2) / 5, 3.4, 0, "rice");
-                  if (Math.random() < 0.12)
-                    for (let i = -3; i <= 3; i++) shootBullet(e.x, e.y, aim + i * 0.1, 4.6, 30);
+            if (g.bossPhase < 2 && hpRatio <= BOSS_P2_HP) {
+              g.bossPhase = 2;
+              g.bossSkill = Math.max(g.bossSkill, 3);
+              g.bossCast = 0;
+              g.bossUltCd = 2.2;
+              g.bullets.length = 0;
+              g.shake = 22;
+              burst(e.x, e.y, 140, 0);
+              e.fire = 1.4; // awakening pause
+              g.banner = { text: "PHASE 2", sub: "보스가 각성했다!", t: 2.2 };
+            }
+            const p2 = g.bossPhase === 2;
+            if (p2) {
+              g.bossUltCd -= dt;
+              if (g.bossUltCd <= 0 && g.zones.length === 0) {
+                g.bossUltCd = BOSS_ULT_CD;
+                spawnZones();
+                g.banner = { text: "⚠ BOSS ULTIMATE ⚠", sub: BOSS_ULT_NAMES[g.stage]!, t: 1.8 };
+                g.shake = 14;
+              }
+            }
+            if (g.bossPhase >= 1) {
+              if (g.bossCast > 0) {
+                g.bossCast -= dt;
+                if (g.bossCast <= 0) bossSkill(e);
+              } else {
+                g.bossSkill -= dt;
+                if (g.bossSkill <= 0) {
+                  g.bossSkill = p2 ? 4.5 : 6;
+                  g.bossCast = BOSS_CAST;
                 }
               }
-            } else if (e.fire <= 0 && g.stage === 0) {
+            }
+            const fired = e.fire <= 0;
+            const nb = g.bullets.length;
+            if (fired && g.stage === 0) {
               e.fire = hpRatio > 0.5 ? 0.14 : 0.1;
               const n = hpRatio > 0.5 ? 9 : 13;
               const base = e.t * (hpRatio > 0.5 ? 1.7 : -2.3);
@@ -724,7 +761,7 @@ function Game() {
               if (Math.random() < 0.35) {
                 for (let i = -2; i <= 2; i++) shootBullet(e.x, e.y, aim + i * 0.12, 4.2, 190);
               }
-            } else if (e.fire <= 0 && g.stage === 1) {
+            } else if (fired && g.stage === 1) {
               e.fire = hpRatio > 0.5 ? 0.22 : 0.16;
               const n = hpRatio > 0.5 ? 14 : 18;
               const off = (Math.floor(e.t * 5) % 2) * (Math.PI / n);
@@ -735,7 +772,7 @@ function Game() {
                 for (const s of [-1, 1])
                   for (let i = 0; i < 3; i++)
                     shootBullet(e.x + s * 50, e.y, e.t * 3 * s + (i * Math.PI * 2) / 3, 2.8, 220, "rice");
-            } else if (e.fire <= 0) {
+            } else if (fired) {
               e.fire = hpRatio > 0.5 ? 0.08 : 0.065;
               for (let k = 0; k < 4; k++) {
                 shootBullet(e.x, e.y, e.t * 2.1 + (k * Math.PI) / 2, 3, 10, "rice");
@@ -745,6 +782,18 @@ function Game() {
                 for (let i = 0; i < 24; i++) shootBullet(e.x, e.y, (i * Math.PI * 2) / 24 + e.t, 1.8, 0);
               if (hpRatio <= 0.5 && Math.random() < 0.18)
                 for (let i = -2; i <= 2; i++) shootBullet(e.x, e.y, aim + i * 0.13, 4.5, 50);
+            }
+            if (fired && p2) {
+              // phase 2: denser, faster fire plus a counter spiral (eased while blast zones charge)
+              const charging = g.zones.length > 0;
+              e.fire *= charging ? 1 : 0.7;
+              if (!charging && Math.random() < 0.5)
+                for (let k = 0; k < 3; k++)
+                  shootBullet(e.x, e.y, -e.t * 2.8 + (k * Math.PI * 2) / 3, 2.4, [300, 190, 30][g.stage] ?? 0, "rice");
+              for (let i = nb; i < g.bullets.length; i++) {
+                g.bullets[i]!.vx *= 1.2;
+                g.bullets[i]!.vy *= 1.2;
+              }
             }
           }
         } else {
@@ -783,6 +832,7 @@ function Game() {
           if (e.boss) {
             g.running = false;
             g.bullets.length = 0;
+            g.zones.length = 0;
             bgm().stop();
             setPhase(g.stage < STAGES.length - 1 ? "stageclear" : "clear");
           }
@@ -864,6 +914,27 @@ function Game() {
       }
       g.bullets = g.bullets.filter((b) => b.x > -30 && b.x < W + 30 && b.y > -40 && b.y < H + 30);
 
+      // boss blast zones: gauge fills, then explodes on whoever is inside
+      for (const z of g.zones) {
+        if (!g.running) break;
+        if (z.delay > 0) {
+          z.delay -= dt;
+          continue;
+        }
+        if (z.boom >= 0) {
+          z.boom += dt;
+          continue;
+        }
+        z.t += dt * (g.slow > 0 ? 0.5 : 1);
+        if (z.t >= ZONE_FILL) {
+          z.boom = 0;
+          g.shake = Math.max(g.shake, 12);
+          burst(z.x, z.y, 24, [300, 190, 10][g.stage] ?? 0);
+          if (inZone(z, g.px, g.py)) hitPlayer();
+        }
+      }
+      g.zones = g.zones.filter((z) => z.boom < ZONE_BOOM);
+
       // pet items
       g.items = g.items.filter((it) => {
         it.t += dt;
@@ -916,6 +987,7 @@ function Game() {
         gauge: g.gauge,
         bossHp: boss ? boss.hp : 0,
         bossMax: boss ? boss.maxHp : 0,
+        bossPhase: g.bossPhase,
         shield: g.shield,
         dodge: g.dodge,
         stage: g.stage,
@@ -927,332 +999,40 @@ function Game() {
       im.src = u;
       return im;
     });
-    const drawPet = (kind: number, x: number, y: number, a: number, sc = 1) => {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(sc, sc);
-      if (kind === 0) {
-        // azure dragon: serpentine body
-        for (let i = 6; i >= 0; i--) {
-          const sx = Math.sin(g.t * 6 - i * 0.8) * 4;
-          ctx.fillStyle = i % 2 ? "#2fa38a" : "#3fd1b0";
-          ctx.beginPath();
-          ctx.arc(sx, i * 3.2, 5 - i * 0.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.fillStyle = "#4fe6c2";
-        ctx.beginPath();
-        ctx.ellipse(0, -3, 6, 5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#ffe08a";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(-3, -6); ctx.lineTo(-6, -12);
-        ctx.moveTo(3, -6); ctx.lineTo(6, -12);
-        ctx.stroke();
-        ctx.fillStyle = "#ff3b3b";
-        ctx.fillRect(-3, -4, 1.5, 1.5);
-        ctx.fillRect(1.5, -4, 1.5, 1.5);
-      } else if (kind === 1) {
-        // phoenix: flapping wings + tail plumes
-        const f = Math.sin(g.t * 12) * 0.5;
-        ctx.fillStyle = "rgba(255,90,30,0.9)";
-        for (const s of [-1, 1]) {
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.quadraticCurveTo(s * 12, -10 - f * 8, s * 16, -2 + f * 6);
-          ctx.quadraticCurveTo(s * 8, 2, 0, 3);
-          ctx.fill();
-        }
-        ctx.fillStyle = "#ffcf40";
-        for (let i = -1; i <= 1; i++) {
-          ctx.beginPath();
-          ctx.ellipse(i * 3, 10, 1.6, 6, i * 0.3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.fillStyle = "#ffe9a0";
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 3.5, 5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#ff5a1e";
-        ctx.beginPath();
-        ctx.moveTo(0, -9); ctx.lineTo(2, -4); ctx.lineTo(-2, -4);
-        ctx.fill();
-      } else {
-        // white tiger: head with stripes
-        ctx.fillStyle = "#f4f4f8";
-        ctx.beginPath();
-        ctx.arc(-6, -7, 3, 0, Math.PI * 2);
-        ctx.arc(6, -7, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 9, 8, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#1c1c2a";
-        ctx.lineWidth = 1.3;
-        ctx.beginPath();
-        ctx.moveTo(0, -8); ctx.lineTo(0, -4);
-        ctx.moveTo(-8, -1); ctx.lineTo(-4, 0);
-        ctx.moveTo(8, -1); ctx.lineTo(4, 0);
-        ctx.moveTo(-7, 3); ctx.lineTo(-4, 3);
-        ctx.moveTo(7, 3); ctx.lineTo(4, 3);
-        ctx.stroke();
-        ctx.fillStyle = "#4fb4ff";
-        ctx.fillRect(-4, -2, 2, 2);
-        ctx.fillRect(2, -2, 2, 2);
-        ctx.fillStyle = "#ff8fa8";
-        ctx.fillRect(-1, 2, 2, 1.5);
-      }
-      void a;
-      ctx.restore();
-    };
-    const drawGirl = (x: number, y: number, scale: number, ult: number, pal: Pal = PLAYER_PAL) => {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(scale, scale);
-      const flap = Math.sin(g.t * 8) * 2;
-      // ult aura
-      if (ult > 0) {
-        const r = (1.6 - ult) * 90 + 20;
-        ctx.globalAlpha = Math.min(1, ult);
-        const grd = ctx.createRadialGradient(0, 0, 4, 0, 0, r);
-        grd.addColorStop(0, "rgba(255,240,180,0.9)");
-        grd.addColorStop(1, "rgba(255,120,200,0)");
-        ctx.fillStyle = grd;
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
-      // skirt / dress
-      ctx.fillStyle = pal.dress;
-      ctx.beginPath();
-      ctx.moveTo(-4, -2);
-      ctx.lineTo(4, -2);
-      ctx.lineTo(13, 18 + flap);
-      ctx.lineTo(-13, 18 + flap);
-      ctx.closePath();
-      ctx.fill();
-      if (pal.acc === "sword") {
-        ctx.save();
-        ctx.rotate(-0.5);
-        ctx.fillStyle = "#f2c6d4";
-        ctx.fillRect(-1.2, -6, 2.4, 34);
-        ctx.fillStyle = "#3a1a22";
-        ctx.fillRect(-1.6, -14, 3.2, 8);
-        ctx.restore();
-      }
-      // sleeves
-      ctx.fillStyle = pal.sleeve ?? "#fff3f7";
-      ctx.beginPath();
-      ctx.ellipse(-9, 0, 5, 7, -0.3, 0, Math.PI * 2);
-      ctx.ellipse(9, 0, 5, 7, 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      // body
-      ctx.fillStyle = "#fff8fb";
-      ctx.beginPath();
-      ctx.ellipse(0, -3, 7, 9, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // long twin-tail hair back
-      ctx.fillStyle = pal.hair;
-      ctx.beginPath();
-      ctx.ellipse(-12, -6 + flap * 0.6, 5, 16, 0.2, 0, Math.PI * 2);
-      ctx.ellipse(12, -6 - flap * 0.6, 5, 16, -0.2, 0, Math.PI * 2);
-      ctx.fill();
-      // head
-      ctx.fillStyle = "#ffe6d8";
-      ctx.beginPath();
-      ctx.arc(0, -16, 9, 0, Math.PI * 2);
-      ctx.fill();
-      // hair front
-      ctx.fillStyle = pal.hair;
-      ctx.beginPath();
-      ctx.arc(0, -18, 9.6, Math.PI, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-9.6, -18);
-      ctx.lineTo(-9.6, -13);
-      ctx.lineTo(-4, -16);
-      ctx.closePath();
-      ctx.moveTo(9.6, -18);
-      ctx.lineTo(9.6, -13);
-      ctx.lineTo(4, -16);
-      ctx.closePath();
-      ctx.fill();
-      // ribbon
-      ctx.fillStyle = pal.ribbon;
-      ctx.beginPath();
-      ctx.ellipse(-8, -23, 4, 2.6, -0.4, 0, Math.PI * 2);
-      ctx.ellipse(8, -23, 4, 2.6, 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      if (pal.acc === "fox") {
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.ellipse(6, -26, 5, 3.5, 0.5, 0, Math.PI * 2);
-        ctx.moveTo(3, -29); ctx.lineTo(4, -34); ctx.lineTo(7, -29);
-        ctx.moveTo(7, -28); ctx.lineTo(11, -32); ctx.lineTo(10, -26);
-        ctx.fill();
-        ctx.fillStyle = "#d8263a";
-        ctx.fillRect(4, -26.5, 4, 1);
-        // floating fox fire
-        ctx.fillStyle = "rgba(255,110,40,0.85)";
-        ctx.beginPath();
-        ctx.ellipse(-15, -14 + Math.sin(g.t * 6) * 2, 2.4, 4, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (pal.acc === "flower") {
-        ctx.fillStyle = "#eaf8ff";
-        for (let i = 0; i < 5; i++) {
-          const a = (i / 5) * Math.PI * 2;
-          ctx.beginPath();
-          ctx.arc(7 + Math.cos(a) * 2.2, -22 + Math.sin(a) * 2.2, 1.6, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.fillStyle = "#5aa8e0";
-        ctx.beginPath();
-        ctx.arc(7, -22, 1, 0, Math.PI * 2);
-        ctx.fill();
-        // butterflies
-        ctx.fillStyle = "rgba(60,110,200,0.8)";
-        for (let i = 0; i < 2; i++) {
-          const bx = Math.cos(g.t * 2 + i * 3) * 18, by = -10 + Math.sin(g.t * 3 + i) * 8;
-          const f = Math.abs(Math.sin(g.t * 12 + i)) * 2 + 0.5;
-          ctx.beginPath();
-          ctx.ellipse(bx - f, by, f, 2, 0, 0, Math.PI * 2);
-          ctx.ellipse(bx + f, by, f, 2, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      // eyes
-      ctx.fillStyle = "#2b2140";
-      ctx.beginPath();
-      ctx.ellipse(-3.3, -15, 1.5, 2.2, 0, 0, Math.PI * 2);
-      ctx.ellipse(3.3, -15, 1.5, 2.2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.beginPath();
-      ctx.arc(-3.8, -15.8, 0.6, 0, Math.PI * 2);
-      ctx.arc(2.8, -15.8, 0.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    };
+    const PAINT = ["#ef8fb6", "#a77be0", "#5ec4c4", "#f6b48a", "#e0b04a"];
+    const shotTint = new WeakMap<Shot, number>();
+    let shotN = 0;
+    // fixed constellation for Yuki's time-stop overlay
+    const SKY_PTS = Array.from({ length: 9 }, (_, i) => [60 + ((i * 151) % 360), 120 + ((i * 263) % 440)] as const);
 
     const drawBoss = (e: Enemy) => {
-      const st = stg(g.stage);
-      ctx.save();
-      ctx.translate(e.x, e.y);
-      const puls = 1 + Math.sin(g.t * 4) * 0.04;
-      ctx.scale(puls, puls);
-      ctx.fillStyle = st.boss.wing;
-      if (g.stage === 1) {
-        // ice crystal wings
-        for (const s of [-1, 1])
-          for (let i = 0; i < 3; i++) {
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(s * (30 + i * 12), -30 + i * 18);
-            ctx.lineTo(s * (50 + i * 10), -10 + i * 16);
-            ctx.closePath();
-            ctx.fill();
-          }
-      } else if (g.stage === 2) {
-        // bat wings
-        for (const s of [-1, 1]) {
-          ctx.beginPath();
-          ctx.moveTo(0, -6);
-          ctx.lineTo(s * 30, -28);
-          ctx.lineTo(s * 64, -18);
-          ctx.lineTo(s * 52, 0);
-          ctx.lineTo(s * 40, -6);
-          ctx.lineTo(s * 30, 8);
-          ctx.lineTo(s * 18, 0);
-          ctx.lineTo(0, 14);
-          ctx.closePath();
-          ctx.fill();
-        }
-      } else {
-        for (const s of [-1, 1]) {
-          ctx.beginPath();
-          ctx.moveTo(0, -4);
-          ctx.quadraticCurveTo(s * 46, -30, s * 58, 6);
-          ctx.quadraticCurveTo(s * 30, 2, 0, 16);
-          ctx.closePath();
-          ctx.fill();
-        }
-      }
-      ctx.restore();
-      drawGirl(e.x, e.y + 6, 1.9, 0, st.boss.pal);
-      ctx.fillStyle = st.boss.hat;
-      if (g.stage === 0) {
+      drawBossArt(ctx, g.stage, e.x, e.y, g.t);
+      // skill cast telegraph: shrinking ring + skill name
+      if (g.bossCast > 0) {
+        const p = 1 - g.bossCast / BOSS_CAST;
+        ctx.strokeStyle = `rgba(242,180,60,${0.5 + p * 0.5})`;
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.ellipse(e.x, e.y - 26, 26, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(e.x - 14, e.y - 27);
-        ctx.lineTo(e.x + 14, e.y - 27);
-        ctx.lineTo(e.x + 2, e.y - 48);
-        ctx.closePath();
-        ctx.fill();
-      } else if (g.stage === 1) {
-        // tiara
-        ctx.fillStyle = "#bff0ff";
-        ctx.beginPath();
-        ctx.moveTo(e.x - 14, e.y - 30);
-        for (let i = 0; i <= 4; i++) {
-          ctx.lineTo(e.x - 14 + i * 7, e.y - (i % 2 === 0 ? 44 : 34));
-        }
-        ctx.lineTo(e.x + 14, e.y - 30);
-        ctx.closePath();
-        ctx.fill();
-      } else {
-        // mob cap
-        ctx.beginPath();
-        ctx.ellipse(e.x, e.y - 34, 22, 12, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#b0122a";
-        ctx.fillRect(e.x - 20, e.y - 35, 40, 3);
+        ctx.arc(e.x, e.y, 80 - p * 45, 0, TAU);
+        ctx.stroke();
+        ctx.textAlign = "center";
+        label(ctx, BOSS_SKILL_NAMES[g.stage] ?? "", e.x, e.y + 70, "bold 13px sans-serif", "#b8620e");
       }
     };
 
     const draw = () => {
-      const st = stg(g.stage);
       const QL = qRef.current;
+      setLowDetail(QL === "low");
       const bgN = QL === "high" ? 1 : QL === "mid" ? 0.6 : 0.25;
+      const ox = g.shake > 0 ? (Math.random() - 0.5) * g.shake : 0;
+      const oy = g.shake > 0 ? (Math.random() - 0.5) * g.shake : 0;
       ctx.save();
-      if (g.shake > 0)
-        ctx.translate((Math.random() - 0.5) * g.shake, (Math.random() - 0.5) * g.shake);
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, st.bg[0]!);
-      bg.addColorStop(0.6, st.bg[1]!);
-      bg.addColorStop(1, st.bg[2]!);
-      ctx.fillStyle = bg;
-      ctx.fillRect(-20, -20, W + 40, H + 40);
-      if (st.fx === "stars") {
-        ctx.fillStyle = "rgba(255,255,255,0.35)";
-        for (let i = 0; i < 60 * bgN; i++) {
-          const sx = (i * 97) % W;
-          const sy = ((i * 173 + g.t * (40 + (i % 5) * 20)) % (H + 20)) - 10;
-          ctx.fillRect(sx, sy, 2, 2 + (i % 3));
-        }
-      } else if (st.fx === "snow") {
-        ctx.fillStyle = "rgba(230,248,255,0.55)";
-        for (let i = 0; i < 70 * bgN; i++) {
-          const sy = ((i * 131 + g.t * (25 + (i % 4) * 12)) % (H + 20)) - 10;
-          const sx = ((i * 89) % W) + Math.sin(g.t + i) * 12;
-          ctx.beginPath();
-          ctx.arc(sx, sy, 1 + (i % 3), 0, Math.PI * 2);
-          ctx.fill();
-        }
-      } else {
-        for (let i = 0; i < 55 * bgN; i++) {
-          const sy = H - (((i * 151 + g.t * (50 + (i % 5) * 18)) % (H + 20)) - 10);
-          const sx = ((i * 71) % W) + Math.sin(g.t * 2 + i) * 8;
-          ctx.fillStyle = `hsl(${20 + (i % 4) * 8} 100% 60% / 0.6)`;
-          ctx.fillRect(sx, sy, 2, 2);
-        }
-      }
+      ctx.translate(ox, oy);
+      drawStageBg(ctx, g.stage, g.t, W, H, bgN);
+      drawStageFx(ctx, g.stage, g.t, W, H, Math.round(40 * bgN));
 
       if (g.ult > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${g.ult * 0.28})`;
+        ctx.fillStyle = `rgba(255,252,240,${g.ult * 0.3})`;
         ctx.fillRect(-20, -20, W + 40, H + 40);
       }
 
@@ -1260,439 +1040,431 @@ function Game() {
       for (const p of g.parts) {
         ctx.globalAlpha = Math.max(0, p.life);
         const ph = Math.round(p.hue / 15) * 15;
-        ctx.fillStyle = hslCache[ph] ??= `hsl(${ph} 90% 70%)`;
-        ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+        ctx.fillStyle = hslCache[ph] ??= `hsl(${ph} 85% 62%)`;
+        if (QL === "low") ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+        else {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 1.4 + p.life * 1.6, 0, TAU);
+          ctx.fill();
+        }
       }
       ctx.globalAlpha = 1;
 
-      // player shots
+      // player shots, styled per hero: sun drops / star crystals / paint drops
       const qlv = g.power > 0 ? g.up.q : 0;
-      const rainbow = `hsl(${Math.round((g.t * 420) % 360 / 20) * 20} 100% 68%)`;
-      const rainbowQ = `hsl(${Math.round((g.t * 300) % 360 / 20) * 20} 100% 70%)`;
+      const rainbow = `hsl(${Math.round(((g.t * 420) % 360) / 20) * 20} 95% 62%)`;
+      const hc = HERO_COL[g.char] ?? HERO_COL[0];
       for (const s of g.shots) {
         if (s.doll) {
-          const lv = g.up.q;
-          ctx.save();
-          ctx.translate(s.x, s.y);
-          ctx.rotate(Math.sin(g.t * 6) * 0.15);
-          ctx.globalAlpha = 0.25;
-          ctx.fillStyle = lv >= 2 ? `hsl(${(g.t * 300) % 360} 100% 70%)` : lv ? "#ffd23f" : "#ff6b8b";
-          ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = "#c8102e"; // dress
-          ctx.beginPath(); ctx.moveTo(-14, 18); ctx.lineTo(14, 18); ctx.lineTo(7, -2); ctx.lineTo(-7, -2); ctx.fill();
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(-7, -2, 14, 5);
-          ctx.fillStyle = "#ffe0cc"; // face
-          ctx.beginPath(); ctx.arc(0, -10, 9, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = "#1a1a24"; // hair
-          ctx.beginPath(); ctx.arc(0, -13, 10, Math.PI, 0); ctx.fill();
-          ctx.fillRect(-10, -13, 3, 14); ctx.fillRect(7, -13, 3, 14);
-          ctx.fillStyle = "#c8102e"; // bow
-          ctx.beginPath(); ctx.ellipse(-8, -22, 6, 3.5, -0.4, 0, Math.PI * 2); ctx.ellipse(8, -22, 6, 3.5, 0.4, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = "#1a1a24";
-          ctx.fillRect(-4, -11, 2, 2); ctx.fillRect(2, -11, 2, 2);
-          ctx.restore();
+          drawSunBuddy(ctx, s.x, s.y, g.t, g.up.q);
           continue;
         }
         const boosted = qlv > 0 && s.power >= 3;
         const sl = g.shotLv;
-        ctx.fillStyle = boosted
-          ? qlv >= 2
-            ? rainbowQ
-            : "#ffd23f"
-          : sl >= 3
-            ? rainbow
-            : sl === 2
-              ? "#8ff7ff"
-              : s.power > 3
-                ? "#ffe066"
-                : CHARS[g.char]!.shot;
+        let col: string = hc.shot;
+        if (g.char === 2) {
+          let n = shotTint.get(s);
+          if (n === undefined) shotTint.set(s, (n = shotN++ % PAINT.length));
+          col = PAINT[n]!;
+        }
+        if (boosted) col = qlv >= 2 ? rainbow : "#f2b43c";
+        else if (sl >= 3) col = rainbow;
+        const sc = (boosted ? 1 + qlv * 0.35 : 1) * (1 + sl * 0.12);
+        if (g.char === 1 && s.homing && QL !== "low") {
+          cube(ctx, s.x, s.y, 3.6 * sc, g.t * 6 + s.x * 0.05, boosted ? col : "#9fd3f5", 0.9);
+          continue;
+        }
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate(Math.atan2(s.vy, s.vx) + Math.PI / 2);
-        if (boosted) {
-          ctx.shadowColor = ctx.fillStyle as string;
-          ctx.shadowBlur = 6 + qlv * 6;
-        }
-        const sc = (boosted ? 1 + qlv * 0.35 : 1) * (1 + sl * 0.12);
+        ctx.scale(sc, sc);
         if (sl >= 2 && QL !== "low") {
-          // cheap glow halo instead of shadowBlur
-          ctx.globalAlpha = 0.22;
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = col;
           ctx.beginPath();
-          ctx.ellipse(0, 0, 6 * sc, 11 * sc, 0, 0, Math.PI * 2);
+          ctx.ellipse(0, 2, 6, 11, 0, 0, TAU);
           ctx.fill();
           ctx.globalAlpha = 1;
         }
-        if (sl >= 3 && QL === "high") {
-          // comet trail
-          ctx.globalAlpha = 0.35;
-          ctx.beginPath();
-          ctx.ellipse(0, 12 * sc, 2 * sc, 12 * sc, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
+        ctx.fillStyle = col;
+        ctx.strokeStyle = "rgba(74,58,92,0.5)";
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.ellipse(0, 0, 2.6 * sc, 7 * sc, 0, 0, Math.PI * 2);
-        ctx.fill();
-        if (sl >= 3 && QL !== "low") {
-          ctx.fillStyle = "#ffffff";
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 1.1 * sc, 4 * sc, 0, 0, Math.PI * 2);
-          ctx.fill();
+        if (g.char === 1) {
+          // star crystal (rhombus)
+          ctx.moveTo(0, -8);
+          ctx.lineTo(3, 0);
+          ctx.lineTo(0, 5);
+          ctx.lineTo(-3, 0);
+        } else {
+          // teardrop: sun drop / paint drop
+          ctx.moveTo(0, -8);
+          ctx.quadraticCurveTo(4, 0, 0, 4.5);
+          ctx.quadraticCurveTo(-4, 0, 0, -8);
         }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.beginPath();
+        ctx.ellipse(-0.8, -1.5, 0.9, 2.4, 0, 0, TAU);
+        ctx.fill();
         ctx.restore();
       }
 
-      // pet items
+      // items
       for (const it of g.items) {
-        if (it.kind === -2) {
-          ctx.save();
-          ctx.translate(it.x, it.y);
-          ctx.rotate(it.t * 3);
-          ctx.shadowBlur = 20;
-          ctx.shadowColor = "#7dffb0";
-          ctx.fillStyle = `hsl(${(it.t * 240) % 360} 95% 62%)`;
-          ctx.fillRect(-10, -10, 20, 20);
-          ctx.restore();
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 13px sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("P", it.x, it.y);
-          ctx.font = "bold 11px sans-serif";
-          ctx.fillText("POWER UP", it.x, it.y - 20);
-          continue;
-        }
-        if (it.kind < 0) {
-          ctx.save();
-          ctx.translate(it.x, it.y);
-          const sc = 1 + Math.sin(it.t * 6) * 0.12;
-          ctx.scale(sc, sc);
-          ctx.shadowBlur = 18;
-          ctx.shadowColor = "#ff4d7a";
-          ctx.fillStyle = "#ff4d7a";
-          ctx.font = "bold 26px sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("♥", 0, 0);
-          ctx.restore();
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 11px sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText("1UP", it.x, it.y - 18);
-          continue;
-        }
-        ctx.save();
-        ctx.translate(it.x, it.y);
-        ctx.rotate(it.t * 2);
-        ctx.shadowBlur = 18;
-        ctx.shadowColor = PET_COL[it.kind] ?? "#fff";
-        ctx.fillStyle = PET_COL[it.kind] ?? "#fff";
-        ctx.beginPath();
-        for (let i = 0; i < 8; i++) { const a = (i * Math.PI) / 4; const rr = i % 2 ? 6 : 13; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 11px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(PET_NAMES[it.kind] ?? "", it.x, it.y - 18);
+        ctx.textBaseline = "middle";
+        if (it.kind === -2) {
+          cube(ctx, it.x, it.y, 8, it.t * 2.5, "#7fe0b8");
+          label(ctx, "P", it.x, it.y, "bold 12px sans-serif");
+          label(ctx, "POWER UP", it.x, it.y - 22, "bold 11px sans-serif");
+        } else if (it.kind < 0) {
+          const k = 1 + Math.sin(it.t * 6) * 0.12;
+          glossyHeart(ctx, it.x, it.y, 9 * k, "#f2577f");
+          label(ctx, "1UP", it.x, it.y - 20, "bold 11px sans-serif");
+        } else {
+          glossyStar(ctx, it.x, it.y, 13, PET_COL[it.kind] ?? "#ffe08a", it.t * 2);
+          label(ctx, PET_NAMES[it.kind] ?? "", it.x, it.y - 22, "bold 11px sans-serif");
+        }
+        ctx.textBaseline = "alphabetic";
       }
       // pets
-      g.pets.forEach((pt) => drawPet(pt.kind, g.px + Math.cos(pt.a) * 40, g.py + Math.sin(pt.a) * 40, pt.a));
+      g.pets.forEach((pt) => drawPetArt(ctx, pt.kind, g.px + Math.cos(pt.a) * 40, g.py + Math.sin(pt.a) * 40, g.t));
+      // boss blast zones: outline + gauge growing from the center, flash on explosion
+      for (const z of g.zones) {
+        if (z.delay > 0) continue;
+        const shape = (k: number) => {
+          ctx.beginPath();
+          if (z.r > 0) ctx.arc(z.x, z.y, z.r * k, 0, TAU);
+          else ctx.rect(z.x - (z.w * k) / 2, z.y - (z.h * k) / 2, z.w * k, z.h * k);
+        };
+        if (z.boom >= 0) {
+          ctx.globalAlpha = Math.max(0, 1 - z.boom / ZONE_BOOM);
+          ctx.fillStyle = "#fff1d6";
+          shape(1 + z.boom * 0.4);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          continue;
+        }
+        const p = Math.min(1, z.t / ZONE_FILL);
+        const blink = p > 0.75 ? 0.5 + 0.5 * Math.sin(g.t * 40) : 1;
+        ctx.fillStyle = `rgba(255,40,70,${0.1 + 0.06 * blink})`;
+        shape(1);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(230,50,80,${0.55 + 0.45 * blink})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = `rgba(240,50,60,${0.22 + p * 0.33})`;
+        shape(p);
+        ctx.fill();
+      }
       // enemies
       for (const e of g.enemies) {
+        ctx.textAlign = "center";
         if (e.carrier) {
-          ctx.save();
-          ctx.translate(e.x, e.y);
-          ctx.shadowBlur = 22;
-          ctx.shadowColor = "#7dffb0";
-          ctx.rotate(e.t * 3);
-          ctx.fillStyle = `hsl(${(e.t * 200) % 360} 90% 65%)`;
-          ctx.beginPath();
-          for (let i = 0; i < 10; i++) { const a = (i * Math.PI) / 5; const rr = i % 2 ? e.r * 0.5 : e.r; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 12px sans-serif";
-          ctx.textAlign = "center";
+          // gift cube carrying a power-up
+          cube(ctx, e.x, e.y, 11, e.t * 2, "#7fe0b8");
+          ctx.fillStyle = "#f2577f";
+          ctx.fillRect(e.x - 2, e.y - 13, 4, 26);
           ctx.textBaseline = "middle";
-          ctx.fillText("P", e.x, e.y);
+          label(ctx, "P", e.x, e.y, "bold 12px sans-serif");
+          ctx.textBaseline = "alphabetic";
           continue;
         }
         if (e.mid) {
-          ctx.save();
-          ctx.translate(e.x, e.y);
           const col = PET_COL[g.stage] ?? "#fff";
-          ctx.shadowBlur = 20;
-          ctx.shadowColor = col;
-          ctx.rotate(e.t);
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          for (let i = 0; i < 6; i++) { const a = (i * Math.PI) / 3; ctx.lineTo(Math.cos(a) * e.r, Math.sin(a) * e.r); }
-          ctx.closePath();
-          ctx.stroke();
-          ctx.rotate(-e.t * 2);
+          drawPetArt(ctx, g.stage, e.x, e.y, e.t, 2.4);
+          ctx.fillStyle = "rgba(74,58,92,0.35)";
+          ctx.fillRect(e.x - 30, e.y - 42, 60, 5);
           ctx.fillStyle = col;
-          ctx.globalAlpha = 0.5;
-          ctx.fillRect(-12, -12, 24, 24);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-          drawPet(g.stage, e.x, e.y, e.t, 1.3);
-          ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.fillRect(e.x - 30, e.y - 40, 60, 5);
-          ctx.fillStyle = col;
-          ctx.fillRect(e.x - 30, e.y - 40, (60 * e.hp) / e.maxHp, 5);
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 11px sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(`중간 보스 ${Math.max(0, e.life ?? 0).toFixed(1)}s`, e.x, e.y - 46);
+          ctx.fillRect(e.x - 30, e.y - 42, (60 * e.hp) / e.maxHp, 5);
+          label(ctx, `중간 보스 ${Math.max(0, e.life ?? 0).toFixed(1)}s`, e.x, e.y - 48, "bold 11px sans-serif");
           continue;
         }
         if (e.boss) drawBoss(e);
-        else {
-          const st = stg(g.stage);
-          ctx.save();
-          ctx.translate(e.x, e.y);
-          if (st.shape === "star") {
-            ctx.rotate(e.t);
-            ctx.fillStyle = st.enemy;
-            ctx.beginPath();
-            for (let i = 0; i < 5; i++) {
-              const a = (i * Math.PI * 2) / 5;
-              ctx.lineTo(Math.cos(a) * e.r, Math.sin(a) * e.r);
-            }
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = "#3d1a4d";
-            ctx.beginPath();
-            ctx.arc(0, 0, 6, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (st.shape === "fairy") {
-            const f = Math.sin(e.t * 14) * 0.4;
-            ctx.fillStyle = "rgba(200,245,255,0.6)";
-            for (const s of [-1, 1]) {
-              ctx.beginPath();
-              ctx.ellipse(s * 11, -4, 10, 5, s * (0.5 + f), 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = st.enemy;
-            ctx.beginPath();
-            ctx.moveTo(0, -2);
-            ctx.lineTo(8, 12);
-            ctx.lineTo(-8, 12);
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = "#ffe6d8";
-            ctx.beginPath();
-            ctx.arc(0, -6, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#e6f9ff";
-            ctx.beginPath();
-            ctx.arc(0, -8, 6.5, Math.PI, Math.PI * 2);
-            ctx.fill();
-          } else {
-            ctx.rotate(-e.t * 2);
-            ctx.fillStyle = st.enemy;
-            ctx.beginPath();
-            for (let i = 0; i < 16; i++) {
-              const a = (i * Math.PI * 2) / 16;
-              const rr = i % 2 === 0 ? e.r + 3 : e.r - 6;
-              ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
-            }
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = "#5a0a0a";
-            ctx.beginPath();
-            ctx.arc(0, 0, 5, 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.restore();
-        }
+        else drawEnemy(ctx, g.stage, e.x, e.y, e.r, e.t);
       }
 
-      // bullets
+      // bullets (cached candy sprites; rice bullets rotated via setTransform)
       for (const b of g.bullets) {
-        ctx.fillStyle = `hsl(${b.hue} 100% 85%)`;
         if (b.kind === "rice") {
-          ctx.save();
-          ctx.translate(b.x, b.y);
-          ctx.rotate(Math.atan2(b.vy, b.vx));
-          ctx.fillStyle = `hsl(${b.hue} 100% 65%)`;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 7, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "#fff";
-          ctx.beginPath();
-          ctx.ellipse(1, 0, 3, 1.4, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+          const a = Math.atan2(b.vy, b.vx);
+          const c = Math.cos(a);
+          const sn = Math.sin(a);
+          ctx.setTransform(c, sn, -sn, c, b.x + ox, b.y + oy);
+          ctx.drawImage(beanSprite(b.hue), -10, -5.5);
         } else {
-          if (QL === "low") {
-            ctx.fillStyle = `hsl(${Math.round(b.hue / 10) * 10} 100% 70%)`;
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            const spr = bulletSprite(b.hue, b.r);
-            ctx.drawImage(spr, b.x - spr.width / 2, b.y - spr.height / 2);
-          }
+          const spr = candySprite(b.hue, b.r);
+          ctx.drawImage(spr, b.x - spr.width / 2, b.y - spr.height / 2);
         }
       }
+      ctx.setTransform(1, 0, 0, 1, ox, oy);
 
       const pc = CHARS[g.char]!;
-      // slow-time tint
+      const upHue = (lv: number, base: number) => (lv >= 2 ? (g.t * 240) % 360 : lv === 1 ? 45 : base);
+      // Yuki W: celestial time-stop — navy veil, astrolabe rings, constellation
       if (g.slow > 0) {
         const lv = g.up.w;
-        const tint = lv >= 2 ? "200,170,255" : lv === 1 ? "120,255,240" : "150,220,255";
-        ctx.fillStyle = `rgba(${tint},${Math.min(0.18 + lv * 0.05, g.slow * 0.1)})`;
+        const a = Math.min(1, g.slow * 2);
+        ctx.fillStyle = `rgba(40,60,130,${Math.min(0.16 + lv * 0.04, g.slow * 0.1)})`;
         ctx.fillRect(-20, -20, W + 40, H + 40);
-        if (lv >= 1) {
-          // frozen clock rings
-          ctx.strokeStyle = `rgba(${tint},0.35)`;
-          ctx.lineWidth = 2;
-          for (let i = 0; i < lv + 1; i++) {
+        ctx.globalAlpha = a * 0.7;
+        ctx.strokeStyle = `hsl(${upHue(lv, 42)} 75% 60%)`;
+        for (let i = 0; i < 2 + lv; i++) {
+          const r = 130 + i * 40;
+          ctx.lineWidth = 2 - i * 0.4;
+          ctx.beginPath();
+          ctx.arc(W / 2, H / 2, r, 0, TAU);
+          ctx.stroke();
+          for (let k = 0; k < 24; k++) {
+            const ang = (k * TAU) / 24 + g.t * (i % 2 ? -0.4 : 0.3);
             ctx.beginPath();
-            ctx.arc(W / 2, H / 2, ((g.t * 80 + i * 140) % 420) + 20, 0, Math.PI * 2);
+            ctx.moveTo(W / 2 + Math.cos(ang) * (r - 5), H / 2 + Math.sin(ang) * (r - 5));
+            ctx.lineTo(W / 2 + Math.cos(ang) * (r + 5), H / 2 + Math.sin(ang) * (r + 5));
             ctx.stroke();
           }
         }
+        ctx.strokeStyle = "rgba(255,240,190,0.8)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        SKY_PTS.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+        ctx.fillStyle = "#fff2b8";
+        for (const [x, y] of SKY_PTS) {
+          starPath(ctx, x, y, 4, 0.4);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
       }
-      // laser
+      // Karen Q: paint-stroke laser with wobbling edges and drips
       if (g.char === 2 && g.power > 0) {
         const lv = g.up.q;
-        const wv = 10 + lv * 5 + Math.sin(g.t * 40) * 3;
-        const edge = lv >= 2 ? `hsla(${(g.t * 240) % 360},100%,60%,0)` : lv === 1 ? "rgba(255,210,40,0)" : "rgba(255,120,40,0)";
-        const core = lv >= 2 ? `hsla(${(g.t * 240) % 360},100%,85%,0.95)` : lv === 1 ? "rgba(255,255,220,0.98)" : "rgba(255,245,200,0.95)";
+        const wv = 11 + lv * 5;
+        const top = g.py - 18;
+        const edge = (side: number, y: number) => g.px + side * (wv + Math.sin(y * 0.06 + g.t * 14 + side) * 3);
+        ctx.beginPath();
+        ctx.moveTo(edge(-1, 0), 0);
+        for (let y = 0; y <= top; y += 20) ctx.lineTo(edge(-1, y), y);
+        ctx.lineTo(edge(-1, top), top);
+        ctx.lineTo(edge(1, top), top);
+        for (let y = top; y >= 0; y -= 20) ctx.lineTo(edge(1, y), y);
+        ctx.closePath();
         const lg = ctx.createLinearGradient(g.px - wv, 0, g.px + wv, 0);
-        lg.addColorStop(0, edge);
-        lg.addColorStop(0.5, core);
-        lg.addColorStop(1, edge);
+        const stripes = lv >= 2 ? PAINT : lv === 1 ? ["#f2b43c", "#ffe08a", "#f2b43c"] : PAINT.slice(0, 3);
+        stripes.forEach((c, i) => lg.addColorStop(i / (stripes.length - 1), c));
         ctx.fillStyle = lg;
-        ctx.fillRect(g.px - wv * 1.6, 0, wv * 3.2, g.py - 18);
-        if (lv >= 1) {
-          ctx.fillStyle = "rgba(255,255,255,0.9)";
-          ctx.fillRect(g.px - 2, 0, 4, g.py - 18);
+        ctx.globalAlpha = 0.85;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(74,58,92,0.35)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.fillRect(g.px - 2, 0, 3, top);
+        for (let i = 0; i < 6; i++) {
+          const y = (i * 97 + g.t * 260) % Math.max(1, top);
+          ctx.fillStyle = PAINT[i % PAINT.length]!;
+          ctx.beginPath();
+          ctx.arc(edge(i % 2 ? 1 : -1, y) + (i % 2 ? 4 : -4), y, 2.5, 0, TAU);
+          ctx.fill();
         }
       }
-      // ult range ring
-      if (g.ult > 0 && g.ultR < 2000) {
+      // E blink / dash trail
+      if (g.trail.t > 0 && g.char !== 0) {
+        const tr = g.trail;
+        const a = tr.t / 0.6;
+        ctx.globalAlpha = a;
+        if (g.char === 1) {
+          // star gates at both ends, linked by a dotted constellation line
+          for (const [x, y] of [[tr.x0, tr.y0], [tr.x1, tr.y1]] as const) {
+            ctx.strokeStyle = "#e2b04a";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(x, y, 20, 8, 0, 0, TAU);
+            ctx.stroke();
+            ctx.strokeStyle = "#9fd3f5";
+            ctx.beginPath();
+            ctx.ellipse(x, y, 13, 5, 0, 0, TAU);
+            ctx.stroke();
+          }
+          ctx.setLineDash([3, 6]);
+          ctx.strokeStyle = "#e2b04a";
+          ctx.beginPath();
+          ctx.moveTo(tr.x0, tr.y0);
+          ctx.lineTo(tr.x1, tr.y1);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          cube(ctx, tr.x0, tr.y0, 6, g.t * 3, "#9fd3f5", 0.6);
+        } else {
+          // paint smear along the dash path + splatter
+          const w = 18 + g.up.e * 6;
+          ctx.lineCap = "round";
+          ctx.strokeStyle = PAINT[1]!;
+          ctx.lineWidth = w;
+          ctx.beginPath();
+          ctx.moveTo(tr.x0, tr.y0);
+          ctx.lineTo(tr.x1, tr.y1);
+          ctx.stroke();
+          ctx.strokeStyle = PAINT[0]!;
+          ctx.lineWidth = w * 0.55;
+          ctx.stroke();
+          ctx.lineCap = "butt";
+          for (let i = 0; i < 8; i++) {
+            const k = i / 7;
+            ctx.fillStyle = PAINT[i % PAINT.length]!;
+            ctx.beginPath();
+            ctx.arc(tr.x0 + (tr.x1 - tr.x0) * k + Math.sin(i * 7) * w, tr.y0 + (tr.y1 - tr.y0) * k + Math.cos(i * 5) * w, 2 + (i % 3), 0, TAU);
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+      // R ultimate range: sunrise rays / astral seal / paint splash
+      if (g.ult > 0) {
         const k = 1 - g.ult / 1.6;
-        const rr = g.ultR * Math.min(1, k * 3);
-        ctx.fillStyle = `hsl(${g.char === 1 ? 195 : 15} 100% 70% / ${g.ult * 0.18})`;
-        ctx.beginPath();
-        ctx.arc(g.px, g.py, rr, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = `hsl(${g.char === 1 ? 195 : 15} 100% 80% / ${g.ult * 0.6})`;
-        ctx.lineWidth = 4;
-        ctx.stroke();
+        const a = Math.min(1, g.ult);
+        if (g.char === 0) {
+          ctx.globalAlpha = a * 0.45;
+          ctx.fillStyle = "#ffd76a";
+          for (let i = 0; i < 14; i++) {
+            const ang = (i * TAU) / 14 + g.t * 0.6;
+            ctx.beginPath();
+            ctx.moveTo(g.px, g.py);
+            ctx.lineTo(g.px + Math.cos(ang - 0.08) * 900, g.py + Math.sin(ang - 0.08) * 900);
+            ctx.lineTo(g.px + Math.cos(ang + 0.08) * 900, g.py + Math.sin(ang + 0.08) * 900);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+        } else {
+          const rr = g.ultR * Math.min(1, k * 3);
+          ctx.globalAlpha = a;
+          ctx.beginPath();
+          if (g.char === 1) ctx.arc(g.px, g.py, rr, 0, TAU);
+          else
+            for (let i = 0; i <= 40; i++) {
+              const ang = (i * TAU) / 40;
+              const r2 = rr * (1 + Math.sin(i * 2.7) * 0.07);
+              ctx.lineTo(g.px + Math.cos(ang) * r2, g.py + Math.sin(ang) * r2);
+            }
+          ctx.fillStyle = g.char === 1 ? "rgba(40,60,130,0.16)" : "rgba(239,143,182,0.2)";
+          ctx.fill();
+          ctx.strokeStyle = g.char === 1 ? "#e2b04a" : PAINT[1]!;
+          ctx.lineWidth = 4;
+          ctx.stroke();
+          if (g.char === 1) {
+            ctx.strokeStyle = "rgba(159,211,245,0.9)";
+            ctx.lineWidth = 2;
+            starPath(ctx, g.px, g.py, rr * 0.92, 0.42, 8, g.t);
+            ctx.stroke();
+          } else
+            for (let i = 0; i < 10; i++) {
+              const ang = (i * TAU) / 10 + 0.3;
+              ctx.fillStyle = PAINT[i % PAINT.length]!;
+              ctx.beginPath();
+              ctx.arc(g.px + Math.cos(ang) * rr * 0.8, g.py + Math.sin(ang) * rr * 0.8, 6 + (i % 3) * 3, 0, TAU);
+              ctx.fill();
+            }
+          ctx.globalAlpha = 1;
+        }
       }
       // player
-      if (!(g.inv > 0 && g.ult === 0 && Math.floor(g.t * 14) % 2 === 0)) {
-        drawGirl(g.px, g.py, g.ult > 0 ? 1 + (1.6 - g.ult) * 0.5 : 1, g.ult, pc.pal);
-        if (g.char === 1) {
-          ctx.fillStyle = "#1c4d7a";
+      if (!(g.inv > 0 && g.ult === 0 && Math.floor(g.t * 14) % 2 === 0))
+        drawHero(ctx, g.char, g.px, g.py, g.ult > 0 ? 1 + (1.6 - g.ult) * 0.5 : 1, g.t, g.ult);
+      // Karen W: palette reflect ring
+      if (g.reflect > 0) {
+        const lv = g.up.w;
+        ctx.strokeStyle = `hsl(${upHue(lv, 300)} 70% 70% / 0.7)`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 6]);
+        ctx.beginPath();
+        ctx.arc(g.px, g.py, 60, g.t * 2, g.t * 2 + TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const n = 6 + lv * 2;
+        for (let i = 0; i < n; i++) {
+          const ang = g.t * 3 + (i * TAU) / n;
+          ctx.fillStyle = PAINT[i % PAINT.length]!;
+          ctx.strokeStyle = "rgba(74,58,92,0.45)";
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(g.px - 12, g.py - 24);
-          ctx.lineTo(g.px + 12, g.py - 24);
-          ctx.lineTo(g.px + 3, g.py - 42);
-          ctx.closePath();
+          ctx.ellipse(g.px + Math.cos(ang) * 60, g.py + Math.sin(ang) * 60, 6, 4.5, ang, 0, TAU);
           ctx.fill();
-        } else if (g.char === 2) {
-          ctx.strokeStyle = "#ffe0b0";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(g.px + 12, g.py + 6);
-          ctx.lineTo(g.px + 20, g.py - 22);
           ctx.stroke();
         }
       }
-      // upgraded skills: Lv1 = gold accents, Lv2 = rainbow + extra rings
-      const upHue = (lv: number, base: number) => (lv >= 2 ? (g.t * 240) % 360 : lv === 1 ? 45 : base);
-      const ring = (r: number, hue: number, a: number, lw: number, rot = 0, dash = false) => {
-        ctx.strokeStyle = `hsl(${hue} 100% 70% / ${a})`;
-        ctx.lineWidth = lw;
-        if (dash) ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        if (dash) ctx.arc(g.px, g.py, r, rot, rot + Math.PI * 1.5);
-        else ctx.arc(g.px, g.py, r, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      };
-      const glowOn = (lv: number, hue: number) => {
-        ctx.shadowColor = `hsl(${hue} 100% 65%)`;
-        ctx.shadowBlur = lv * 12;
-      };
-      if (g.reflect > 0) {
-        const lv = g.up.w;
-        const h = upHue(lv, 30);
-        glowOn(lv, h);
-        ring(60, h, 0.5 + Math.sin(g.t * 16) * 0.25, 3 + lv * 2);
-        if (lv >= 1) ring(68, h, 0.35, 2, g.t * 5, true);
-        if (lv >= 2) ring(76, (h + 120) % 360, 0.35, 2, -g.t * 7, true);
-        ctx.shadowBlur = 0;
-      }
+      // Haru W: sprout bubble shield with orbiting leaves
       if (g.shield > 0) {
         const lv = g.up.w;
-        const h = upHue(lv, 200);
-        glowOn(lv, h);
-        ring(26, h, 0.4 + Math.sin(g.t * 10) * 0.2, 3 + lv * 1.5);
-        if (lv >= 1) {
-          // hexagram seal
-          ctx.strokeStyle = `hsl(${h} 100% 75% / 0.5)`;
-          ctx.lineWidth = 1.5;
-          for (const off of lv >= 2 ? [0, Math.PI / 3] : [0]) {
-            ctx.beginPath();
-            for (let i = 0; i <= 3; i++) {
-              const a = g.t * 2 + off + (i * Math.PI * 2) / 3;
-              const x = g.px + Math.cos(a) * 34;
-              const y = g.py + Math.sin(a) * 34;
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-          }
+        const r = 28 + lv * 3;
+        if (QL !== "low") {
+          const gr = ctx.createRadialGradient(g.px - r * 0.3, g.py - r * 0.4, 2, g.px, g.py, r);
+          gr.addColorStop(0, "rgba(255,255,240,0.12)");
+          gr.addColorStop(0.75, "rgba(170,220,120,0.16)");
+          gr.addColorStop(1, "rgba(124,179,66,0.45)");
+          ctx.fillStyle = gr;
+        } else ctx.fillStyle = "rgba(170,220,120,0.25)";
+        ctx.beginPath();
+        ctx.arc(g.px, g.py, r, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = lv ? `hsl(${upHue(lv, 45)} 85% 50% / 0.85)` : "rgba(124,179,66,0.85)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        const n = 6 + lv * 2;
+        for (let i = 0; i < n; i++) {
+          const ang = g.t * 2 + (i * TAU) / n;
+          spike(ctx, g.px + Math.cos(ang) * r, g.py + Math.sin(ang) * r, ang + Math.PI / 2, 9, 5, i % 2 ? "#8bc34a" : "#7cb342", 0.3);
         }
-        ctx.shadowBlur = 0;
       }
+      // Haru E: heartbeat ring + golden steps underfoot
       if (g.dodge > 0) {
         const lv = g.up.e;
-        const h = upHue(lv, 300);
-        glowOn(lv, h);
-        ring(34, h, 0.7, 2 + lv, g.t * 6, true);
-        if (lv >= 1) ring(42, h, 0.5, 2, -g.t * 8, true);
-        if (lv >= 2) ring(50, (h + 180) % 360, 0.45, 2, g.t * 10, true);
-        ctx.shadowBlur = 0;
-      }
-      // after-image trail for upgraded E dash/blink
-      if (g.up.e > 0 && g.char !== 0 && g.inv > 0 && g.ult === 0) {
-        const h = upHue(g.up.e, g.char === 1 ? 195 : 20);
-        ctx.fillStyle = `hsl(${h} 100% 70% / 0.25)`;
+        const R = 34 + lv * 4;
+        ctx.strokeStyle = `hsl(${upHue(lv, 8)} 80% 58% / 0.9)`;
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(g.px, g.py, 18 + g.up.e * 6 + Math.sin(g.t * 20) * 3, 0, Math.PI * 2);
-        ctx.fill();
+        for (let i = 0; i <= 90; i++) {
+          const ang = (i / 90) * TAU;
+          const ph = (((ang * 3 - g.t * 8) % TAU) + TAU) % TAU;
+          const rr = R + (ph < 0.6 ? Math.sin((ph / 0.6) * TAU) * 7 : 0);
+          ctx.lineTo(g.px + Math.cos(ang) * rr, g.py + Math.sin(ang) * rr);
+        }
+        ctx.stroke();
+        for (let k = 0; k < 3; k++) {
+          const x = g.px - 14 + k * 9;
+          const y = g.py + 24 + k * 3 + Math.sin(g.t * 10 + k) * 1.5;
+          ctx.fillStyle = `rgba(242,180,60,${0.85 - k * 0.2})`;
+          ctx.beginPath();
+          ctx.moveTo(x - 6, y);
+          ctx.lineTo(x + 6, y);
+          ctx.lineTo(x + 9, y - 4);
+          ctx.lineTo(x - 3, y - 4);
+          ctx.closePath();
+          ctx.fill();
+        }
       }
       // hitbox
       ctx.fillStyle = "#fff";
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.arc(g.px, g.py, 2.2, 0, Math.PI * 2);
+      ctx.arc(g.px, g.py, 2.6, 0, TAU);
       ctx.fill();
+      ctx.stroke();
 
       // tutorial (stage 1, first 5s)
       if (g.running && g.stage === 0 && g.t < TUTORIAL) {
         ctx.globalAlpha = Math.min(1, (TUTORIAL - g.t) * 2);
-        ctx.fillStyle = "rgba(10,5,22,0.78)";
+        ctx.fillStyle = "rgba(255,250,242,0.94)";
         ctx.beginPath();
         ctx.roundRect(36, 150, W - 72, 310, 16);
         ctx.fill();
-        ctx.strokeStyle = "rgba(255,200,230,0.5)";
+        ctx.strokeStyle = "rgba(167,123,224,0.5)";
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.textAlign = "center";
-        ctx.fillStyle = "#ffd6ea";
+        ctx.fillStyle = INK;
         ctx.font = "bold 20px sans-serif";
         ctx.fillText("조작 가이드", W / 2, 188);
         const cc = CHARS[g.char]!;
@@ -1708,79 +1480,80 @@ function Game() {
         lines.forEach(([k, v], i) => {
           const y = 226 + i * 32;
           ctx.textAlign = "right";
-          ctx.fillStyle = "#ffe066";
+          ctx.fillStyle = "#c0602a";
           ctx.fillText(k, W / 2 - 10, y);
           ctx.textAlign = "left";
-          ctx.fillStyle = "#ffffff";
+          ctx.fillStyle = INK;
           ctx.fillText(v, W / 2 + 10, y);
         });
         ctx.textAlign = "center";
-        ctx.fillStyle = "#ff8ac4";
+        ctx.fillStyle = "#a77be0";
         ctx.font = "bold 14px sans-serif";
         ctx.fillText(`적 출현까지 ${Math.ceil(TUTORIAL - g.t)}초`, W / 2, 440);
         ctx.globalAlpha = 1;
       }
-      // boss ultimate warning
-      if (g.bossUlt > 0) {
-        const a = Math.min(1, g.bossUlt);
-        ctx.fillStyle = `rgba(160,0,30,${0.12 + Math.sin(g.t * 12) * 0.06})`;
+      // phase 2 tint + boss announcements
+      if (g.bossPhase === 2 && g.bossSpawned) {
+        ctx.fillStyle = `rgba(200,30,70,${0.07 + Math.sin(g.t * 4) * 0.03})`;
         ctx.fillRect(-20, -20, W + 40, H + 40);
-        if (g.bossUlt > BOSS_ULT - 1.6) {
-          ctx.globalAlpha = a;
-          ctx.textAlign = "center";
-          ctx.fillStyle = "#ff3355";
-          ctx.font = "bold 13px sans-serif";
-          ctx.fillText("⚠ BOSS ULTIMATE ⚠", W / 2, 200);
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 22px serif";
-          ctx.fillText(`「${BOSS_ULT_NAMES[g.stage]}」`, W / 2, 230);
-          ctx.globalAlpha = 1;
-        }
       }
-      // ult cut-in
+      if (g.banner.t > 0) {
+        ctx.globalAlpha = Math.min(1, g.banner.t * 2);
+        ctx.fillStyle = "rgba(60,40,80,0.7)";
+        ctx.fillRect(0, 180, W, 62);
+        ctx.textAlign = "center";
+        ctx.fillStyle = g.banner.text === "BOSS SKILL" ? "#ffd36e" : "#ff6b8b";
+        ctx.font = "bold 13px sans-serif";
+        ctx.fillText(g.banner.text, W / 2, 202);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 20px serif";
+        ctx.fillText(g.banner.sub, W / 2, 230);
+        ctx.globalAlpha = 1;
+      }
+      // ult cut-in: concept-art pose slides in on a band in the hero's colors
       if (g.ult > 0.5) {
         const p = 1.6 - g.ult; // 0 -> 1.1
         const slide = p < 0.2 ? 1 - p / 0.2 : p > 0.85 ? (p - 0.85) / 0.25 : 0;
         const alpha = Math.max(0, 1 - Math.max(0, p - 0.85) / 0.25);
+        const band = () => {
+          ctx.beginPath();
+          ctx.moveTo(0, H / 2 - 120);
+          ctx.lineTo(W, H / 2 - 160);
+          ctx.lineTo(W, H / 2 + 80);
+          ctx.lineTo(0, H / 2 + 120);
+          ctx.closePath();
+        };
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = "rgba(10,5,25,0.75)";
-        ctx.beginPath();
-        ctx.moveTo(0, H / 2 - 120);
-        ctx.lineTo(W, H / 2 - 160);
-        ctx.lineTo(W, H / 2 + 80);
-        ctx.lineTo(0, H / 2 + 120);
-        ctx.closePath();
+        band();
+        const bg = ctx.createLinearGradient(0, H / 2 - 160, 0, H / 2 + 120);
+        bg.addColorStop(0, "#fff7ea");
+        bg.addColorStop(1, "#f6e3f0");
+        ctx.fillStyle = bg;
         ctx.fill();
-        ctx.fillStyle = pc.pal.dress;
-        ctx.fillRect(0, H / 2 - 124, W, 3);
-        ctx.fillRect(0, H / 2 + 118, W, 3);
+        ctx.fillStyle = hc.a;
+        ctx.fillRect(0, H / 2 - 124, W, 4);
+        ctx.fillStyle = hc.c;
+        ctx.fillRect(0, H / 2 + 118, W, 4);
         ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(0, H / 2 - 120);
-        ctx.lineTo(W, H / 2 - 160);
-        ctx.lineTo(W, H / 2 + 80);
-        ctx.lineTo(0, H / 2 + 120);
-        ctx.closePath();
+        band();
         ctx.clip();
         const art = artImgs[g.char];
         if (art && art.complete && art.naturalWidth > 0) {
-          const ah = 480;
+          const ah = 300;
           const aw = (art.naturalWidth / art.naturalHeight) * ah;
-          ctx.globalAlpha = alpha * 0.25;
-          ctx.drawImage(art, 150 - aw / 2 - slide * 300 + 30, H / 2 - 260 + p * 30, aw * 1.15, ah * 1.15);
-          ctx.globalAlpha = alpha;
-          ctx.drawImage(art, 150 - aw / 2 - slide * 300, H / 2 - 220 - p * 20, aw, ah);
-        } else {
-          drawGirl(150 - slide * 300, H / 2 + 40, 6.5, 0, pc.pal);
-        }
+          const ax = 130 - aw / 2 - slide * 300;
+          ctx.drawImage(art, ax, H / 2 - 170 - p * 12, aw, ah);
+          // feather the photo's right edge into the band
+          const fade = ctx.createLinearGradient(ax + aw - 50, 0, ax + aw, 0);
+          fade.addColorStop(0, "rgba(251,239,236,0)");
+          fade.addColorStop(1, "rgba(251,239,236,1)");
+          ctx.fillStyle = fade;
+          ctx.fillRect(ax + aw - 50, H / 2 - 180, 52, ah + 30);
+        } else drawHero(ctx, g.char, 140 - slide * 300, H / 2 - 20, 4.5, g.t);
         ctx.restore();
         ctx.textAlign = "right";
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 30px serif";
-        ctx.fillText(`「${pc.ult.name}」`, W - 24 + slide * 300, H / 2 - 10);
-        ctx.font = "bold 14px sans-serif";
-        ctx.fillStyle = pc.pal.hair;
-        ctx.fillText(`${pc.name} — SPELL CARD`, W - 24 + slide * 300, H / 2 + 18);
+        label(ctx, `「${pc.ult.name}」`, W - 20 + slide * 300, H / 2 - 10, "bold 26px serif");
+        label(ctx, `${pc.name} — SPELL CARD`, W - 20 + slide * 300, H / 2 + 18, "bold 14px sans-serif", hc.a);
         ctx.globalAlpha = 1;
       }
       // stage banner
@@ -1788,9 +1561,7 @@ function Game() {
       if (g.running && g.t >= bannerStart && g.t < bannerStart + 2.2) {
         ctx.globalAlpha = Math.min(1, (bannerStart + 2.2 - g.t) * 2);
         ctx.textAlign = "center";
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 22px sans-serif";
-        ctx.fillText(st.name, W / 2, H / 2 - 40);
+        label(ctx, stg(g.stage).name, W / 2, H / 2 - 40, "bold 22px sans-serif");
         ctx.globalAlpha = 1;
       }
 
@@ -1809,8 +1580,13 @@ function Game() {
       g.reflect = 0;
       g.ult = 0;
       g.power = 0;
-      g.bossUlt = 0;
-      g.bossUltUsed = false;
+      g.bossPhase = 0;
+      g.bossSkill = 0;
+      g.bossCast = 0;
+      g.bossUltCd = 0;
+      g.zones.length = 0;
+      g.banner.t = 0;
+      g.trail.t = 0;
       g.midSpawned = false;
       g.carrierSpawned = false;
       g.carrierAt = 8 + Math.random() * 30;
@@ -1854,6 +1630,7 @@ function Game() {
       g.lives = 3;
       g.inv = 3;
       g.bullets = g.bullets.filter((b) => Math.hypot(b.x - g.px, b.y - g.py) > 160);
+      g.zones.length = 0;
       burst(g.px, g.py, 80, 50);
       keys.clear();
       taps.clear();
@@ -1964,14 +1741,18 @@ function Game() {
           />
           {hud.bossMax > 0 && (
             <div className="pointer-events-none absolute left-3 right-3 top-3">
-              <div className="mb-1 text-[10px] font-bold tracking-widest text-foreground">
-                {stg(hud.stage).boss.name}
+              <div className="mb-1 flex justify-between text-[10px] font-bold tracking-widest text-foreground">
+                <span>{stg(hud.stage).boss.name}</span>
+                {hud.bossPhase === 2 && <span className="text-destructive">PHASE 2</span>}
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-background/60">
+              <div className="relative h-2 overflow-hidden rounded-full bg-background/60">
                 <div
                   className="h-full bg-destructive transition-[width] duration-100"
                   style={{ width: `${(hud.bossHp / hud.bossMax) * 100}%` }}
                 />
+                {[BOSS_SKILL_HP, BOSS_P2_HP].map((m) => (
+                  <div key={m} className="absolute inset-y-0 w-0.5 bg-foreground/70" style={{ left: `${m * 100}%` }} />
+                ))}
               </div>
             </div>
           )}
@@ -1989,7 +1770,7 @@ function Game() {
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <img src={ART_URLS[i]} alt={c.name} className="h-10 w-10 rounded-full border border-border object-cover object-top" />
+                      <img src={FACE_URLS[i]} alt={c.name} className="h-12 w-12 rounded-full border border-border object-cover" />
                       <span className="font-black text-foreground">{c.name}</span>
                       <span className="text-[11px] text-muted-foreground">{c.title}</span>
                     </div>
